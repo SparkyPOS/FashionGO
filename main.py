@@ -6,7 +6,7 @@ if not os.path.exists('Data'):
 clicker = "arguments[0].click();"
 
 
-def product_details_scrap(driver, urls, key):
+def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
     for url in urls:
         try:
             driver.get(url)
@@ -70,7 +70,13 @@ def product_details_scrap(driver, urls, key):
             except Exception as e:
                 pass 
 
+            if fixed_price:
+                p_price = fixed_price
+
             data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images]
+            if keyword and keyword.lower() not in ' '.join(str(i) for i in data).lower():
+                print('Skipped (keyword not found): ', p_title)
+                continue
             csvWriter(data, key)
             
         except Exception as e:
@@ -260,6 +266,12 @@ def main(driver, number, scrap_driver):
         if number == 3:
             v_link = input('Vendor Link: ')
             key = v_link.rsplit('/', 1)[-1]
+            fixed_price = input('Enter a price to set for all items (leave empty to keep original prices): ').strip()
+            if not fixed_price:
+                fixed_price = None
+            keyword = input('Enter a word to keep only entries containing it (leave empty to keep all): ').strip()
+            if not keyword:
+                keyword = None
             csvMaker(key)
             try:
                 driver.get(v_link)
@@ -280,7 +292,7 @@ def main(driver, number, scrap_driver):
                                 product_url_list.append(item_url)
                             except:
                                 pass 
-                        product_details_scrap(scrap_driver, product_url_list, key)
+                        product_details_scrap(scrap_driver, product_url_list, key, fixed_price, keyword)
                     except Exception as e:
                         pass 
                         items_checker = True
