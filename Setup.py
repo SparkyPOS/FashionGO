@@ -1,3 +1,11 @@
-import os
+import subprocess
+import sys
 
-os.system('pip3 install selenium webdriver-manager')
+
+def install_packages():
+    packages = ['selenium', 'webdriver-manager']
+    return subprocess.run([sys.executable, '-m', 'pip', 'install', *packages], check=False).returncode
+
+
+if __name__ == '__main__':
+    raise SystemExit(install_packages())
