@@ -15,9 +15,9 @@ clicker = "arguments[0].click();"
 with open('Config.json', 'r') as cfile:
     config = json.load(cfile)
 
-email = config['email']
-pasw = config['password']
-set_time = config['time']
+email = os.getenv('FASHIONGO_EMAIL') or config.get('email', '')
+pasw = os.getenv('FASHIONGO_PASSWORD') or config.get('password', '')
+set_time = config.get('time', ['', ''])
 
 
 
