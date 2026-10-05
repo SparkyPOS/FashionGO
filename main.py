@@ -212,6 +212,12 @@ def duke_login(driver):
         'input[type="password"]'
     ]
 
+    if not duke_email or not duke_password:
+        raise RuntimeError(
+            'Duke credentials are not configured. Add DUKE_EMAIL and DUKE_PASSWORD '
+            'or fill duke_email/duke_password in Config.json.'
+        )
+
     email_field = None
     for selector in email_locators:
         try:
