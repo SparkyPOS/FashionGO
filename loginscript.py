@@ -2,8 +2,8 @@ from utils import *
 
 def login(driver):
     driver.get('https://www.fashiongo.net/login')
-    driver.find_element(By.ID, "email-inp").send_keys('owner@shawnsfleamarket.com')
-    driver.find_element(By.ID, "pwd_inp").send_keys('Cassie1999!')
+    driver.find_element(By.ID, "email-inp").send_keys(email)
+    driver.find_element(By.ID, "pwd_inp").send_keys(pasw)
     submit = driver.find_element(By.ID, "btn-signin")
     driver.execute_script(clicker, submit)
     sleep(3)
