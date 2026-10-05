@@ -17,6 +17,8 @@ with open('Config.json', 'r') as cfile:
 
 email = os.getenv('FASHIONGO_EMAIL') or config.get('email', '')
 pasw = os.getenv('FASHIONGO_PASSWORD') or config.get('password', '')
+duke_email = os.getenv('DUKE_EMAIL') or config.get('duke_email', '')
+duke_password = os.getenv('DUKE_PASSWORD') or config.get('duke_password', '')
 set_time = config.get('time', ['', ''])
 
 
