@@ -341,25 +341,27 @@ def duke_scrape_product_page(driver, product_url):
                     '.price-box', '.price-box .price', '.price-container',
                     '.product-info-price .price', '.product-pricing .price',
                     '.regular-price', '.special-price', '.old-price', '.final-price',
-                    '.product-info-main .price', '[data-price-amount]', '[data-price]'
+                    '.product-info-main .price', '[data-price-amount]', '[data-price]',
+                    '[itemprop="price"]', 'meta[itemprop="price"]',
+                    '.product-info-main [itemprop="price"]'
                 ];
                 const parts = [];
                 const seen = new Set();
-                selectors.forEach((selector) => {
+                for (const selector of selectors) {
                     document.querySelectorAll(selector).forEach((cell) => {
                         const text = (cell.innerText || cell.textContent || '').trim();
                         const amount = (cell.getAttribute('data-price-amount') || cell.getAttribute('data-price') || '').trim();
-                        if (amount && !seen.has(amount)) {
-                            seen.add(amount);
-                            parts.push(amount);
-                        }
-                        if (text && !seen.has(text)) {
-                            seen.add(text);
-                            parts.push(text);
-                        }
+                        const itemPrice = (cell.getAttribute('content') || '').trim();
+                        const candidates = [amount, itemPrice, text].filter(Boolean);
+                        candidates.forEach((candidate) => {
+                            if (!seen.has(candidate)) {
+                                seen.add(candidate);
+                                parts.push(candidate);
+                            }
+                        });
                     });
-                });
-                return parts.join('\\n');
+                }
+                return parts.slice(0, 40).join('\\n');
             """) or ''
             match = re.search(price_pattern, price_cell_text)
             if match:
@@ -469,7 +471,7 @@ def duke_scrape_category(driver, category_url, key):
             sleep(3)
 
             next_page = None
-            for selector in ['a.pageNavNext', '.pageNavLink.pageNavNext', 'a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next']:
+            for selector in ['a.pageNavNext', '.pageNavLink.pageNavNext', 'a.pageNavLink[rel="next"]', 'a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next', '.pageNavNext a', 'a[href*="p="]']:
                 try:
                     next_page = driver.find_element(By.CSS_SELECTOR, selector)
                     if next_page:
