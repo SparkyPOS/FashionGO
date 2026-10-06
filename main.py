@@ -334,13 +334,30 @@ def duke_scrape_product_page(driver, product_url):
     for attempt in range(3):
         try:
             price_cell_text = driver.execute_script("""
-                const cells = document.querySelectorAll(
-                    '.price_cell, td.price_cell, .priceCell, .price-cell, [class*="price_cell"], [class*="priceCell"], .price, span.price, td.price, div.price'
-                );
+                const selectors = [
+                    '.price_cell', 'td.price_cell', '.priceCell', '.price-cell',
+                    '[class*="price_cell"]', '[class*="priceCell"]',
+                    '.price', 'span.price', 'td.price', 'div.price',
+                    '.price-box', '.price-box .price', '.price-container',
+                    '.product-info-price .price', '.product-pricing .price',
+                    '.regular-price', '.special-price', '.old-price', '.final-price',
+                    '.product-info-main .price', '[data-price-amount]', '[data-price]'
+                ];
                 const parts = [];
-                cells.forEach((cell) => {
-                    const text = (cell.innerText || cell.textContent || '').trim();
-                    if (text) parts.push(text);
+                const seen = new Set();
+                selectors.forEach((selector) => {
+                    document.querySelectorAll(selector).forEach((cell) => {
+                        const text = (cell.innerText || cell.textContent || '').trim();
+                        const amount = (cell.getAttribute('data-price-amount') || cell.getAttribute('data-price') || '').trim();
+                        if (amount && !seen.has(amount)) {
+                            seen.add(amount);
+                            parts.push(amount);
+                        }
+                        if (text && !seen.has(text)) {
+                            seen.add(text);
+                            parts.push(text);
+                        }
+                    });
                 });
                 return parts.join('\\n');
             """) or ''
@@ -354,7 +371,7 @@ def duke_scrape_product_page(driver, product_url):
         sleep(2)
         body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or body_text
     if not price:
-        match = re.search(r'Price\s*:\s*(' + price_pattern + r')', body_text, re.I)
+        match = re.search(r'Price\s*[:=]\s*(' + price_pattern + r')', body_text, re.I)
         if not match:
             match = re.search(price_pattern, body_text)
         if match:
