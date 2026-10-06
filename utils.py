@@ -1,4 +1,4 @@
-import csv, json, os, sys, pickle, subprocess, site, importlib
+import csv, json, os, sys, pickle, subprocess, site, importlib, shutil
 from time import sleep
 
 
@@ -66,11 +66,48 @@ def csvWriter(data,filename):
         wr.writerow(data)
 
 
+def _resolve_local_driver_path(driver_name):
+    candidates = []
+    system_path = shutil.which(driver_name)
+    if system_path:
+        candidates.append(system_path)
+
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    local_candidates = [
+        os.path.join(project_dir, driver_name),
+        os.path.join(project_dir, f"{driver_name}.exe"),
+        os.path.join(project_dir, 'chromedriver'),
+        os.path.join(project_dir, 'geckodriver'),
+    ]
+    candidates.extend(local_candidates)
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _install_chromedriver_fallback():
+    try:
+        return ChromeDriverManager().install()
+    except Exception:
+        return _resolve_local_driver_path('chromedriver')
+
+
+def _install_geckodriver_fallback():
+    try:
+        return GeckoDriverManager().install()
+    except Exception:
+        return _resolve_local_driver_path('geckodriver')
+
+
 def get_browser(headless=False, sel=False):
     download_directory = os.path.join(os.getcwd(), "Data")
     agent = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/124.0.1216.0 Safari/537.2'
-    s = Service(executable_path=ChromeDriverManager().install())#"
-    # s = Service(executable_path='chromedriver.exe')
+    driver_path = _install_chromedriver_fallback()
+    if not driver_path:
+        raise RuntimeError('ChromeDriver could not be resolved. Install chromedriver or place it in the project folder.')
+    s = Service(executable_path=driver_path)
     chrome_option = webdriver.ChromeOptions()
     if headless:
         chrome_option.add_argument('--headless')
@@ -97,7 +134,10 @@ def get_browser_firefox(headless=False):
     firefox_options.set_preference("general.useragent.override", agent)
     if headless:
         firefox_options.headless = True
-    driver = webdriver.Firefox(executable_path=GeckoDriverManager().install(), options=firefox_options)
+    driver_path = _install_geckodriver_fallback()
+    if not driver_path:
+        raise RuntimeError('GeckoDriver could not be resolved. Install geckodriver or place it in the project folder.')
+    driver = webdriver.Firefox(executable_path=driver_path, options=firefox_options)
 
     return driver
 
