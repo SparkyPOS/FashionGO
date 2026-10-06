@@ -35,7 +35,7 @@ def duke_login(driver):
     sleep(3)
 
     email_field = None
-    for selector in ['input[name="login[username]"]', 'input[name="email"]', '#email', 'input[type="email"]']:
+    for selector in ['input[name="username"]', '#username', 'input[name="login[username]"]', 'input[name="email"]', '#email', 'input[type="email"]', 'form[action*="login"] input[type="text"]']:
         try:
             email_field = driver.find_element(By.CSS_SELECTOR, selector)
             break
@@ -50,7 +50,7 @@ def duke_login(driver):
     email_field.send_keys(duke_email)
 
     password_field = None
-    for selector in ['input[name="login[password]"]', 'input[name="pass"]', '#pass', 'input[type="password"]']:
+    for selector in ['input[name="password"]', '#password', 'input[name="login[password]"]', 'input[name="pass"]', '#pass', 'input[type="password"]']:
         try:
             password_field = driver.find_element(By.CSS_SELECTOR, selector)
             break
@@ -65,7 +65,7 @@ def duke_login(driver):
     password_field.send_keys(duke_password)
 
     submit_btn = None
-    for selector in ['button[type="submit"]', 'button[title="Login"]', 'button[title="Sign In"]']:
+    for selector in ['button[type="submit"]', 'input[type="submit"]', 'button[title="Login"]', 'button[title="Sign In"]']:
         try:
             submit_btn = driver.find_element(By.CSS_SELECTOR, selector)
             break
@@ -74,6 +74,9 @@ def duke_login(driver):
 
     if submit_btn is not None:
         driver.execute_script(clicker, submit_btn)
+        sleep(4)
+    else:
+        password_field.submit()
         sleep(4)
 
     return driver

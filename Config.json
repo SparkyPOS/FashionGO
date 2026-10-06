@@ -1,7 +1,7 @@
 {
-    "email": "",
-    "password": "",
-    "time": ["", ""],
+    "fashiongo_email": "",
+    "fashiongo_password": "",
     "duke_email": "",
-    "duke_password": ""
+    "duke_password": "",
+    "time": ["", ""]
 }
