@@ -1,4 +1,4 @@
-import csv, json, os, sys, pickle, subprocess, site, importlib, shutil
+import csv, json, os, sys, pickle, subprocess, site, importlib, importlib.util, shutil
 from time import sleep
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,7 +16,12 @@ def ensure_dependencies():
     if not missing:
         return
 
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', 'selenium', 'webdriver-manager'])
+    try:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', 'selenium', 'webdriver-manager'])
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print('Failed to install required packages ({}): {}'.format(', '.join(missing), exc))
+        print('Please run Setup.bat (or "python Setup.py") and try again.')
+        raise SystemExit(1)
 
     user_site = site.getusersitepackages()
     if user_site and user_site not in sys.path:
@@ -38,8 +43,15 @@ from selenium.webdriver.support import expected_conditions as EC
 
 clicker = "arguments[0].click();"
 
-with open(CONFIG_PATH, 'r') as cfile:
-    config = json.load(cfile)
+try:
+    with open(CONFIG_PATH, 'r') as cfile:
+        config = json.load(cfile)
+except FileNotFoundError:
+    print(f'Config.json not found at {CONFIG_PATH}. Make sure it is in the same folder as the scripts.')
+    raise SystemExit(1)
+except json.JSONDecodeError as exc:
+    print(f'Config.json is not valid JSON: {exc}')
+    raise SystemExit(1)
 
 email = os.getenv('FASHIONGO_EMAIL') or config.get('email', '')
 pasw = os.getenv('FASHIONGO_PASSWORD') or config.get('password', '')
