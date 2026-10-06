@@ -53,10 +53,18 @@ except json.JSONDecodeError as exc:
     print(f'Config.json is not valid JSON: {exc}')
     raise SystemExit(1)
 
-email = os.getenv('FASHIONGO_EMAIL') or config.get('email', '')
-pasw = os.getenv('FASHIONGO_PASSWORD') or config.get('password', '')
-duke_email = os.getenv('DUKE_EMAIL') or config.get('duke_email', '')
-duke_password = os.getenv('DUKE_PASSWORD') or config.get('duke_password', '')
+def _config_value(*keys):
+    for key in keys:
+        value = config.get(key)
+        if value:
+            return value
+    return ''
+
+
+email = os.getenv('FASHIONGO_EMAIL') or _config_value('fashiongo_email', 'email', 'username')
+pasw = os.getenv('FASHIONGO_PASSWORD') or _config_value('fashiongo_password', 'password', 'pass')
+duke_email = os.getenv('DUKE_EMAIL') or _config_value('duke_email', 'duke_username')
+duke_password = os.getenv('DUKE_PASSWORD') or _config_value('duke_password', 'duke_pass')
 set_time = config.get('time', ['', ''])
 
 
