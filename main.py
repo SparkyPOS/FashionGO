@@ -441,7 +441,7 @@ def duke_scrape_category(driver, category_url, key):
             sleep(3)
 
             next_page = None
-            for selector in ['a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next']:
+            for selector in ['a.pageNavNext', '.pageNavLink.pageNavNext', 'a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next']:
                 try:
                     next_page = driver.find_element(By.CSS_SELECTOR, selector)
                     if next_page:
