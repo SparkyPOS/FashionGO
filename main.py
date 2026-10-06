@@ -335,7 +335,7 @@ def duke_scrape_product_page(driver, product_url):
         try:
             price_cell_text = driver.execute_script("""
                 const cells = document.querySelectorAll(
-                    '.price_cell, td.price_cell, .priceCell, .price-cell, [class*="price_cell"], [class*="priceCell"]'
+                    '.price_cell, td.price_cell, .priceCell, .price-cell, [class*="price_cell"], [class*="priceCell"], .price, span.price, td.price, div.price'
                 );
                 const parts = [];
                 cells.forEach((cell) => {
