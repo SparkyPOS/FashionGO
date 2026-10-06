@@ -134,6 +134,18 @@ def _resolve_chrome_binary():
     return None
 
 
+def _should_use_headless_browser(explicit_headless=False):
+    if explicit_headless:
+        return True
+    if os.environ.get('DISPLAY') is None:
+        return True
+    if os.environ.get('CI') or os.environ.get('GITHUB_ACTIONS'):
+        return True
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        return True
+    return False
+
+
 def get_browser(headless=False, sel=False):
     download_directory = DATA_DIR
     agent = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/124.0.1216.0 Safari/537.2'
@@ -141,29 +153,43 @@ def get_browser(headless=False, sel=False):
     if not driver_path:
         raise RuntimeError('ChromeDriver could not be resolved. Install chromedriver or place it in the project folder.')
     s = Service(executable_path=driver_path)
-    chrome_option = webdriver.ChromeOptions()
     chrome_binary = _resolve_chrome_binary()
-    if chrome_binary:
-        chrome_option.binary_location = chrome_binary
-    if headless:
-        chrome_option.add_argument('--headless')
-        chrome_option.add_argument("--no-sandbox")
-        chrome_option.add_argument("--disable-dev-shm-usage")
-        chrome_option.add_argument(f'user-agent={agent}')
-    chrome_option.add_argument('--log-level=3')
-    chrome_option.add_argument('--incognito')
-    chrome_option.page_load_strategy = 'eager'
-    chrome_option.add_argument('--ignore-certificate-errors')
-    chrome_option.add_argument('--ignore-ssl-errors')
-    chrome_option.add_argument('--ignore-certificate-errors-spki-list')
-    prefs = {"profile.managed_default_content_settings.images": 2, "download.default_directory": download_directory}
-    chrome_option.add_experimental_option("prefs", prefs)
-    chrome_option.add_experimental_option("useAutomationExtension", False)
-    chrome_option.add_experimental_option("excludeSwitches", ["enable-automation"])
+
+    def build_options(use_headless):
+        chrome_option = webdriver.ChromeOptions()
+        if chrome_binary:
+            chrome_option.binary_location = chrome_binary
+        if use_headless:
+            chrome_option.add_argument('--headless=new')
+            chrome_option.add_argument('--no-sandbox')
+            chrome_option.add_argument('--disable-dev-shm-usage')
+            chrome_option.add_argument('--disable-gpu')
+            chrome_option.add_argument('--window-size=1920,1080')
+            chrome_option.add_argument(f'user-agent={agent}')
+        chrome_option.add_argument('--log-level=3')
+        chrome_option.add_argument('--incognito')
+        chrome_option.page_load_strategy = 'eager'
+        chrome_option.add_argument('--ignore-certificate-errors')
+        chrome_option.add_argument('--ignore-ssl-errors')
+        chrome_option.add_argument('--ignore-certificate-errors-spki-list')
+        prefs = {"profile.managed_default_content_settings.images": 2, "download.default_directory": download_directory}
+        chrome_option.add_experimental_option("prefs", prefs)
+        chrome_option.add_experimental_option("useAutomationExtension", False)
+        chrome_option.add_experimental_option("excludeSwitches", ["enable-automation"])
+        return chrome_option
+
+    use_headless = headless or _should_use_headless_browser()
+    chrome_option = build_options(use_headless)
     try:
         driver = webdriver.Chrome(service=s, options=chrome_option)
         return driver
     except Exception:
+        if not use_headless and _should_use_headless_browser():
+            chrome_option = build_options(True)
+            try:
+                return webdriver.Chrome(service=s, options=chrome_option)
+            except Exception:
+                pass
         if chrome_binary is None:
             raise RuntimeError('Chrome/Chromium executable could not be resolved. Install Chrome or Chromium and set CHROME_BIN.')
         raise
