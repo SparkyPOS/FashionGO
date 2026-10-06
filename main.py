@@ -201,12 +201,17 @@ def duke_login(driver):
     sleep(3)
 
     email_locators = [
+        'input[name="username"]',
+        '#username',
         'input[name="login[username]"]',
         'input[name="email"]',
         '#email',
-        'input[type="email"]'
+        'input[type="email"]',
+        'form[action*="login"] input[type="text"]'
     ]
     password_locators = [
+        'input[name="password"]',
+        '#password',
         'input[name="login[password]"]',
         'input[name="pass"]',
         '#pass',
@@ -263,6 +268,9 @@ def duke_login(driver):
 
     if submit_btn is not None:
         driver.execute_script(clicker, submit_btn)
+        sleep(4)
+    else:
+        password_field.submit()
         sleep(4)
 
     return driver
@@ -374,7 +382,11 @@ def duke_scrape_product_page(driver, product_url):
 
 
 def duke_scrape_category(driver, category_url, key):
-    duke_login(driver)
+    try:
+        duke_login(driver)
+    except RuntimeError as exc:
+        print(f'Duke login failed: {exc}')
+        print('Continuing without login; prices may be hidden for guest visitors.')
     driver.get(category_url)
     sleep(5)
 
@@ -572,7 +584,7 @@ def main(driver, number, scrap_driver):
             duke_scrape_category(driver, duke_url, key)
 
     except Exception as e:
-        pass
+        print(f'Scraping failed: {e}')
 
 
 if __name__ == '__main__':
