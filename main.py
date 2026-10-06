@@ -330,13 +330,24 @@ def duke_scrape_product_page(driver, product_url):
             sku = match.group(1).strip()
 
     price = ''
-    match = re.search(r'Price\s*:\s*([^\n\r]+)', body_text, re.I)
-    if match:
-        price = match.group(1).strip()
-    else:
-        matches = re.findall(r'[$€£]\s*\d[\d,]*(?:\.\d+)?', body_text)
-        if matches:
-            price = matches[0].strip()
+    try:
+        price_cell_text = driver.execute_script("""
+            const cell = document.querySelector('.price_cell, td.price_cell, .priceCell');
+            return cell ? cell.innerText : '';
+        """) or ''
+        match = re.search(r'[$€£]\s*\d[\d,]*(?:\.\d+)?', price_cell_text)
+        if match:
+            price = match.group(0).strip()
+    except Exception:
+        pass
+    if not price:
+        match = re.search(r'Price\s*:\s*([^\n\r]+)', body_text, re.I)
+        if match:
+            price = match.group(1).strip()
+        else:
+            matches = re.findall(r'[$€£]\s*\d[\d,]*(?:\.\d+)?', body_text)
+            if matches:
+                price = matches[0].strip()
 
     description = ''
     for selector in ['.product.attribute.description .value', '.description .value', '[data-role="description"]', '.product-info-main .description', '.product.description']:
@@ -398,16 +409,18 @@ def duke_scrape_category(driver, category_url, key):
         seen_products = set()
         page_number = 0
         current_page_url = driver.current_url
-        while page_number < 25:
+        while True:
             product_links = duke_get_product_links(driver)
             print(f'Page {page_number + 1}: found {len(product_links)} product link(s).')
             if not product_links and page_number == 0:
                 print('No product links found on the category page. Check the URL or your Duke login.')
+            new_products = 0
             for product_url in product_links:
                 normalized_url = product_url.split('#')[0].split('?')[0]
                 if normalized_url in seen_products:
                     continue
                 seen_products.add(normalized_url)
+                new_products += 1
                 print(f'Scraping {normalized_url}')
                 try:
                     row = duke_scrape_product_page(driver, normalized_url)
@@ -417,6 +430,10 @@ def duke_scrape_category(driver, category_url, key):
                         print('Skipped (out of stock or no product data found).')
                 except Exception as exc:
                     print(f'Failed to scrape {normalized_url}: {exc}')
+
+            if page_number > 0 and new_products == 0:
+                print('No new products found on this page; stopping.')
+                break
 
             # Scraping product pages navigated away; go back to the category
             # page so the next-page link can actually be found.
@@ -433,14 +450,27 @@ def duke_scrape_category(driver, category_url, key):
                     pass
 
             if next_page is None:
+                for xpath in [
+                    '//a[contains(translate(normalize-space(.), "NEXT", "next"), "next")]',
+                    '//a[.//img[contains(translate(@alt, "NEXT", "next"), "next")]]',
+                    '//a[contains(translate(@title, "NEXT", "next"), "next")]',
+                    '//a[normalize-space(text())=">" or normalize-space(text())=">>"]',
+                ]:
+                    try:
+                        next_page = driver.find_element(By.XPATH, xpath)
+                        if next_page:
+                            break
+                    except Exception:
+                        pass
+
+            if next_page is None:
+                print('No next-page link found; finished paging.')
                 break
 
             try:
                 driver.execute_script(clicker, next_page)
                 sleep(4)
             except Exception:
-                break
-            if driver.current_url == current_page_url:
                 break
             current_page_url = driver.current_url
             page_number += 1
