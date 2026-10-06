@@ -331,39 +331,40 @@ def duke_scrape_product_page(driver, product_url):
 
     price = ''
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
+    prioritized_selectors = [
+        '.price_cell', 'td.price_cell', '.priceCell', '.price-cell',
+        '.price', 'span.price', 'td.price', 'div.price',
+        '.price-box', '.price-box .price', '.price-container',
+        '.product-info-price .price', '.product-pricing .price',
+        '.regular-price', '.special-price', '.old-price', '.final-price',
+        '.product-info-main .price', '[itemprop="price"]', 'meta[itemprop="price"]',
+        '.product-info-main [itemprop="price"]', '[data-price-amount]', '[data-price]'
+    ]
     for attempt in range(3):
         try:
-            price_cell_text = driver.execute_script("""
-                const selectors = [
-                    '.price_cell', 'td.price_cell', '.priceCell', '.price-cell',
-                    '[class*="price_cell"]', '[class*="priceCell"]',
-                    '.price', 'span.price', 'td.price', 'div.price',
-                    '.price-box', '.price-box .price', '.price-container',
-                    '.product-info-price .price', '.product-pricing .price',
-                    '.regular-price', '.special-price', '.old-price', '.final-price',
-                    '.product-info-main .price', '[data-price-amount]', '[data-price]'
-                ];
-                const parts = [];
-                const seen = new Set();
-                selectors.forEach((selector) => {
-                    document.querySelectorAll(selector).forEach((cell) => {
-                        const text = (cell.innerText || cell.textContent || '').trim();
-                        const amount = (cell.getAttribute('data-price-amount') || cell.getAttribute('data-price') || '').trim();
-                        if (amount && !seen.has(amount)) {
-                            seen.add(amount);
-                            parts.push(amount);
-                        }
-                        if (text && !seen.has(text)) {
-                            seen.add(text);
-                            parts.push(text);
-                        }
-                    });
-                });
-                return parts.join('\\n');
-            """) or ''
-            match = re.search(price_pattern, price_cell_text)
-            if match:
-                price = match.group(0).strip()
+            for selector in prioritized_selectors:
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                except Exception:
+                    elements = []
+                for element in elements:
+                    for candidate in [
+                        element.text,
+                        element.get_attribute('innerText'),
+                        element.get_attribute('data-price-amount'),
+                        element.get_attribute('data-price'),
+                        element.get_attribute('content'),
+                    ]:
+                        if not candidate:
+                            continue
+                        match = re.search(price_pattern, candidate)
+                        if match:
+                            price = match.group(0).strip()
+                            break
+                    if price:
+                        break
+                if price:
+                    break
         except Exception:
             pass
         if price:
@@ -469,7 +470,7 @@ def duke_scrape_category(driver, category_url, key):
             sleep(3)
 
             next_page = None
-            for selector in ['a.pageNavNext', '.pageNavLink.pageNavNext', 'a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next']:
+            for selector in ['a.pageNavNext', '.pageNavLink.pageNavNext', 'a.pageNavLink[rel="next"]', 'a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next', '.pageNavNext a', 'a[href*="p="]']:
                 try:
                     next_page = driver.find_element(By.CSS_SELECTOR, selector)
                     if next_page:
