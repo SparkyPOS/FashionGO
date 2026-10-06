@@ -10,7 +10,7 @@ def login(driver):
     sleep(3)
 
     cookies = driver.get_cookies()
-    with open('cookies.pkl', 'wb') as f:
+    with open(COOKIES_PATH, 'wb') as f:
         pickle.dump(cookies, f)
 
     return driver

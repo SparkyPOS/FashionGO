@@ -1,8 +1,9 @@
+import re
 from utils import *
 from urllib.parse import urlparse
 
-if not os.path.exists('Data'):
-    os.mkdir('Data')
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR, exist_ok=True)
 
 clicker = "arguments[0].click();"
 
@@ -177,7 +178,7 @@ def login(driver):
     sleep(3)
 
     cookies = driver.get_cookies()
-    with open('cookies.pkl', 'wb') as f:
+    with open(COOKIES_PATH, 'wb') as f:
         pickle.dump(cookies, f)
 
     driver.quit() 
@@ -185,7 +186,7 @@ def login(driver):
 
 def sign_in(driver):
     driver.get('https://www.fashiongo.net')
-    with open('cookies.pkl', 'rb') as f:
+    with open(COOKIES_PATH, 'rb') as f:
         cookies = pickle.load(f)
     for cookie in cookies:
         driver.add_cookie(cookie)
