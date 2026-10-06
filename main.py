@@ -330,24 +330,35 @@ def duke_scrape_product_page(driver, product_url):
             sku = match.group(1).strip()
 
     price = ''
-    try:
-        price_cell_text = driver.execute_script("""
-            const cell = document.querySelector('.price_cell, td.price_cell, .priceCell');
-            return cell ? cell.innerText : '';
-        """) or ''
-        match = re.search(r'[$€£]\s*\d[\d,]*(?:\.\d+)?', price_cell_text)
-        if match:
-            price = match.group(0).strip()
-    except Exception:
-        pass
+    price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
+    for attempt in range(3):
+        try:
+            price_cell_text = driver.execute_script("""
+                const cells = document.querySelectorAll(
+                    '.price_cell, td.price_cell, .priceCell, .price-cell, [class*="price_cell"], [class*="priceCell"]'
+                );
+                const parts = [];
+                cells.forEach((cell) => {
+                    const text = (cell.innerText || cell.textContent || '').trim();
+                    if (text) parts.push(text);
+                });
+                return parts.join('\\n');
+            """) or ''
+            match = re.search(price_pattern, price_cell_text)
+            if match:
+                price = match.group(0).strip()
+        except Exception:
+            pass
+        if price:
+            break
+        sleep(2)
+        body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or body_text
     if not price:
-        match = re.search(r'Price\s*:\s*([^\n\r]+)', body_text, re.I)
+        match = re.search(r'Price\s*:\s*(' + price_pattern + r')', body_text, re.I)
+        if not match:
+            match = re.search(price_pattern, body_text)
         if match:
-            price = match.group(1).strip()
-        else:
-            matches = re.findall(r'[$€£]\s*\d[\d,]*(?:\.\d+)?', body_text)
-            if matches:
-                price = matches[0].strip()
+            price = match.group(match.lastindex or 0).strip()
 
     description = ''
     for selector in ['.product.attribute.description .value', '.description .value', '[data-role="description"]', '.product-info-main .description', '.product.description']:
