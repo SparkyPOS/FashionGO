@@ -382,48 +382,71 @@ def duke_scrape_product_page(driver, product_url):
 
 
 def duke_scrape_category(driver, category_url, key):
+    # The selector-fallback loops used for Duke probe many locators; with a long
+    # implicit wait every miss blocks for seconds, which makes the bot look stuck.
+    driver.implicitly_wait(0)
     try:
-        duke_login(driver)
-    except RuntimeError as exc:
-        print(f'Duke login failed: {exc}')
-        print('Continuing without login; prices may be hidden for guest visitors.')
-    driver.get(category_url)
-    sleep(5)
-
-    seen_products = set()
-    page_number = 0
-    while page_number < 25:
-        product_links = duke_get_product_links(driver)
-        for product_url in product_links:
-            normalized_url = product_url.split('#')[0].split('?')[0]
-            if normalized_url in seen_products:
-                continue
-            seen_products.add(normalized_url)
-            try:
-                row = duke_scrape_product_page(driver, normalized_url)
-                if row:
-                    csvWriter(row, key)
-            except Exception:
-                pass
-
-        next_page = None
-        for selector in ['a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next']:
-            try:
-                next_page = driver.find_element(By.CSS_SELECTOR, selector)
-                if next_page:
-                    break
-            except Exception:
-                pass
-
-        if next_page is None:
-            break
-
         try:
-            driver.execute_script(clicker, next_page)
-            sleep(4)
-        except Exception:
-            break
-        page_number += 1
+            duke_login(driver)
+        except Exception as exc:
+            print(f'Duke login failed: {exc}')
+            print('Continuing without login; prices may be hidden for guest visitors.')
+        print(f'Opening category page: {category_url}')
+        driver.get(category_url)
+        sleep(5)
+
+        seen_products = set()
+        page_number = 0
+        current_page_url = driver.current_url
+        while page_number < 25:
+            product_links = duke_get_product_links(driver)
+            print(f'Page {page_number + 1}: found {len(product_links)} product link(s).')
+            if not product_links and page_number == 0:
+                print('No product links found on the category page. Check the URL or your Duke login.')
+            for product_url in product_links:
+                normalized_url = product_url.split('#')[0].split('?')[0]
+                if normalized_url in seen_products:
+                    continue
+                seen_products.add(normalized_url)
+                print(f'Scraping {normalized_url}')
+                try:
+                    row = duke_scrape_product_page(driver, normalized_url)
+                    if row:
+                        csvWriter(row, key)
+                    else:
+                        print('Skipped (out of stock or no product data found).')
+                except Exception as exc:
+                    print(f'Failed to scrape {normalized_url}: {exc}')
+
+            # Scraping product pages navigated away; go back to the category
+            # page so the next-page link can actually be found.
+            driver.get(current_page_url)
+            sleep(3)
+
+            next_page = None
+            for selector in ['a[rel="next"]', '.next', '.pagination-next', '.action.next', 'li.next a', 'a.next']:
+                try:
+                    next_page = driver.find_element(By.CSS_SELECTOR, selector)
+                    if next_page:
+                        break
+                except Exception:
+                    pass
+
+            if next_page is None:
+                break
+
+            try:
+                driver.execute_script(clicker, next_page)
+                sleep(4)
+            except Exception:
+                break
+            if driver.current_url == current_page_url:
+                break
+            current_page_url = driver.current_url
+            page_number += 1
+        print(f'Duke scraping finished. Visited {len(seen_products)} product page(s). Results saved to the "{key}" CSV.')
+    finally:
+        driver.implicitly_wait(10)
 
 
 def main(driver, number, scrap_driver):
