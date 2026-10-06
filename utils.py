@@ -1,6 +1,11 @@
 import csv, json, os, sys, pickle, subprocess, site, importlib, shutil
 from time import sleep
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, 'Config.json')
+DATA_DIR = os.path.join(BASE_DIR, 'Data')
+COOKIES_PATH = os.path.join(BASE_DIR, 'cookies.pkl')
+
 
 def ensure_dependencies():
     missing = []
@@ -33,7 +38,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 clicker = "arguments[0].click();"
 
-with open('Config.json', 'r') as cfile:
+with open(CONFIG_PATH, 'r') as cfile:
     config = json.load(cfile)
 
 email = os.getenv('FASHIONGO_EMAIL') or config.get('email', '')
@@ -45,8 +50,10 @@ set_time = config.get('time', ['', ''])
 
 
 def csvMaker(filename):
-    if not os.path.exists('Data/' + filename + '_.csv'):
-        with open('Data/' + filename + '_.csv', 'w', newline='', errors='ignore', encoding='utf-8-sig') as f:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    csv_path = os.path.join(DATA_DIR, f'{filename}_.csv')
+    if not os.path.exists(csv_path):
+        with open(csv_path, 'w', newline='', errors='ignore', encoding='utf-8-sig') as f:
             wr = csv.writer(f)
             wr.writerow([
                 'Title',
@@ -61,7 +68,9 @@ def csvMaker(filename):
 
 
 def csvWriter(data,filename):
-    with open('Data/' + filename + '_.csv', 'a', newline='', errors='ignore', encoding='utf-8-sig') as f:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    csv_path = os.path.join(DATA_DIR, f'{filename}_.csv')
+    with open(csv_path, 'a', newline='', errors='ignore', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
         wr.writerow(data)
 
@@ -101,14 +110,41 @@ def _install_geckodriver_fallback():
         return _resolve_local_driver_path('geckodriver')
 
 
+def _resolve_chrome_binary():
+    candidates = []
+    for env_name in ['CHROME_BIN', 'GOOGLE_CHROME_BIN', 'CHROMIUM_BIN']:
+        env_value = os.getenv(env_name)
+        if env_value:
+            candidates.append(env_value)
+    for candidate in [
+        shutil.which('google-chrome'),
+        shutil.which('google-chrome-stable'),
+        shutil.which('chromium'),
+        shutil.which('chromium-browser'),
+        shutil.which('chrome'),
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+    ]:
+        if candidate:
+            candidates.append(candidate)
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def get_browser(headless=False, sel=False):
-    download_directory = os.path.join(os.getcwd(), "Data")
+    download_directory = DATA_DIR
     agent = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/124.0.1216.0 Safari/537.2'
     driver_path = _install_chromedriver_fallback()
     if not driver_path:
         raise RuntimeError('ChromeDriver could not be resolved. Install chromedriver or place it in the project folder.')
     s = Service(executable_path=driver_path)
     chrome_option = webdriver.ChromeOptions()
+    chrome_binary = _resolve_chrome_binary()
+    if chrome_binary:
+        chrome_option.binary_location = chrome_binary
     if headless:
         chrome_option.add_argument('--headless')
         chrome_option.add_argument("--no-sandbox")
@@ -120,12 +156,17 @@ def get_browser(headless=False, sel=False):
     chrome_option.add_argument('--ignore-certificate-errors')
     chrome_option.add_argument('--ignore-ssl-errors')
     chrome_option.add_argument('--ignore-certificate-errors-spki-list')
-    prefs = {"profile.managed_default_content_settings.images": 2}
+    prefs = {"profile.managed_default_content_settings.images": 2, "download.default_directory": download_directory}
     chrome_option.add_experimental_option("prefs", prefs)
     chrome_option.add_experimental_option("useAutomationExtension", False)
     chrome_option.add_experimental_option("excludeSwitches", ["enable-automation"])
-    driver = webdriver.Chrome(service=s, options=chrome_option)
-    return driver
+    try:
+        driver = webdriver.Chrome(service=s, options=chrome_option)
+        return driver
+    except Exception:
+        if chrome_binary is None:
+            raise RuntimeError('Chrome/Chromium executable could not be resolved. Install Chrome or Chromium and set CHROME_BIN.')
+        raise
 
 
 def get_browser_firefox(headless=False):
