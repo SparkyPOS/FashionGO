@@ -1,28 +1,35 @@
-try:
-    from selenium.webdriver.chrome.service import Service
-    from webdriver_manager.chrome import ChromeDriverManager
-    from webdriver_manager.firefox import GeckoDriverManager
-    from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import Select
-    from selenium.webdriver.common.action_chains import ActionChains
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-except ModuleNotFoundError:
-    import subprocess
-    subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'selenium', 'webdriver-manager'])
-    from selenium.webdriver.chrome.service import Service
-    from webdriver_manager.chrome import ChromeDriverManager
-    from webdriver_manager.firefox import GeckoDriverManager
-    from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import Select
-    from selenium.webdriver.common.action_chains import ActionChains
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-
-import csv, json, os, sys, pickle
+import csv, json, os, sys, pickle, subprocess, site, importlib
 from time import sleep
+
+
+def ensure_dependencies():
+    missing = []
+    for module_name in ('selenium', 'webdriver_manager'):
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(module_name)
+
+    if not missing:
+        return
+
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', 'selenium', 'webdriver-manager'])
+
+    user_site = site.getusersitepackages()
+    if user_site and user_site not in sys.path:
+        sys.path.insert(0, user_site)
+    importlib.invalidate_caches()
+
+
+ensure_dependencies()
+
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 clicker = "arguments[0].click();"
 
