@@ -195,7 +195,7 @@ def sign_in(driver):
 
 
 def duke_login(driver):
-    login_url = 'https://www.dukeimports.com/customer/account/login/'
+    login_url = 'https://www.dukeimports.com/login.jhtm'
     driver.get(login_url)
     sleep(3)
 

@@ -21,7 +21,7 @@ def duke_login(driver):
         print('Duke credentials not configured. Skipping Duke login.')
         return driver
 
-    driver.get('https://www.dukeimports.com/customer/account/login/')
+    driver.get('https://www.dukeimports.com/login.jhtm')
     sleep(3)
 
     email_field = None
