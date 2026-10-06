@@ -2,12 +2,22 @@ from utils import *
 
 
 def login(driver):
+    if not email or not pasw:
+        print('FashionGO credentials not configured. Set FASHIONGO_EMAIL/FASHIONGO_PASSWORD or Config.json values before running.')
+        return driver
+
     driver.get('https://www.fashiongo.net/login')
-    driver.find_element(By.ID, "email-inp").send_keys(email)
-    driver.find_element(By.ID, "pwd_inp").send_keys(pasw)
-    submit = driver.find_element(By.ID, "btn-signin")
-    driver.execute_script(clicker, submit)
     sleep(3)
+
+    try:
+        driver.find_element(By.ID, "email-inp").send_keys(email)
+        driver.find_element(By.ID, "pwd_inp").send_keys(pasw)
+        submit = driver.find_element(By.ID, "btn-signin")
+        driver.execute_script(clicker, submit)
+        sleep(3)
+    except Exception as exc:
+        print(f'Failed to sign in to FashionGO: {exc}')
+        return driver
 
     cookies = driver.get_cookies()
     with open(COOKIES_PATH, 'wb') as f:
@@ -33,7 +43,8 @@ def duke_login(driver):
             pass
 
     if email_field is None:
-        raise RuntimeError('Could not find Duke email field')
+        print('Could not find Duke email field. Skipping Duke login.')
+        return driver
 
     email_field.clear()
     email_field.send_keys(duke_email)
@@ -47,7 +58,8 @@ def duke_login(driver):
             pass
 
     if password_field is None:
-        raise RuntimeError('Could not find Duke password field')
+        print('Could not find Duke password field. Skipping Duke login.')
+        return driver
 
     password_field.clear()
     password_field.send_keys(duke_password)
@@ -68,15 +80,19 @@ def duke_login(driver):
 
 
 if __name__ == "__main__":
-    fashiongo_driver = get_browser()
     try:
-        login(fashiongo_driver)
-    finally:
-        fashiongo_driver.quit()
-
-    if duke_email and duke_password:
-        duke_driver = get_browser()
+        fashiongo_driver = get_browser()
         try:
-            duke_login(duke_driver)
+            login(fashiongo_driver)
         finally:
-            duke_driver.quit()
+            fashiongo_driver.quit()
+
+        if duke_email and duke_password:
+            duke_driver = get_browser()
+            try:
+                duke_login(duke_driver)
+            finally:
+                duke_driver.quit()
+    except Exception as exc:
+        print(f'Login script failed: {exc}')
+        raise SystemExit(1)
