@@ -202,7 +202,7 @@ def duke_is_logged_in(driver):
             return links.some(link => {
                 const href = (link.getAttribute('href') || '').toLowerCase();
                 const text = (link.textContent || '').toLowerCase();
-                return href.includes('logout') || text.includes('log out') || text.includes('logout') || text.includes('sign out');
+                return href.includes('logout') || href.includes('logoff') || text.includes('log out') || text.includes('logout') || text.includes('sign out') || text.includes('log off') || text.includes('logoff');
             });
         """))
     except Exception:
@@ -228,6 +228,81 @@ def duke_login_error_message(driver):
         return ''
 
 
+def duke_find_login_fields(driver):
+    """Locate the Duke login form by its password field, then resolve the
+    username field and submit button inside that same form. Scoping to the
+    form avoids typing credentials into unrelated forms (search box,
+    newsletter signup) that appear earlier in the page DOM."""
+    password_field = None
+    for selector in [
+        'input[name="password"]',
+        'input[name="j_password"]',
+        '#password',
+        'input[name="login[password]"]',
+        'input[name="pass"]',
+        '#pass',
+        'input[type="password"]',
+    ]:
+        try:
+            password_field = driver.find_element(By.CSS_SELECTOR, selector)
+            break
+        except Exception:
+            pass
+
+    if password_field is None:
+        return None, None, None, None
+
+    form = None
+    try:
+        form = password_field.find_element(By.XPATH, 'ancestor::form[1]')
+    except Exception:
+        pass
+
+    scope = form if form is not None else driver
+    email_field = None
+    for selector in [
+        'input[name="username"]',
+        'input[name="j_username"]',
+        '#username',
+        'input[name="login[username]"]',
+        'input[name="email"]',
+        '#email',
+        'input[type="email"]',
+        'input[type="text"]',
+    ]:
+        try:
+            email_field = scope.find_element(By.CSS_SELECTOR, selector)
+            break
+        except Exception:
+            pass
+
+    submit_btn = None
+    for selector in [
+        'button[type="submit"]', 'input[type="submit"]', 'input[type="image"]',
+        'button[title="Login"]', 'button[title="Sign In"]', 'button',
+    ]:
+        try:
+            submit_btn = scope.find_element(By.CSS_SELECTOR, selector)
+            break
+        except Exception:
+            pass
+
+    return form, email_field, password_field, submit_btn
+
+
+def duke_fill_field(driver, field, value):
+    field.clear()
+    field.send_keys(value)
+    try:
+        driver.execute_script(
+            "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));"
+            "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+            field,
+        )
+    except Exception:
+        pass
+
+
 def duke_login(driver):
     login_url = 'https://www.dukeimports.com/login.jhtm'
     driver.get(login_url)
@@ -237,78 +312,33 @@ def duke_login(driver):
         print('Duke session already logged in.')
         return driver
 
-    email_locators = [
-        'input[name="username"]',
-        '#username',
-        'input[name="login[username]"]',
-        'input[name="email"]',
-        '#email',
-        'input[type="email"]',
-        'form[action*="login"] input[type="text"]'
-    ]
-    password_locators = [
-        'input[name="password"]',
-        '#password',
-        'input[name="login[password]"]',
-        'input[name="pass"]',
-        '#pass',
-        'input[type="password"]'
-    ]
-
     if not duke_email or not duke_password:
         raise RuntimeError(
             'Duke credentials are not configured. Add DUKE_EMAIL and DUKE_PASSWORD '
             'or fill duke_email/duke_password in Config.json.'
         )
 
-    email_field = None
-    for selector in email_locators:
-        try:
-            email_field = driver.find_element(By.CSS_SELECTOR, selector)
-            break
-        except Exception:
-            pass
-
-    if email_field is None:
-        raise RuntimeError('Could not find Duke email field')
-
-    email_field.clear()
-    email_field.send_keys(duke_email)
-
-    password_field = None
-    for selector in password_locators:
-        try:
-            password_field = driver.find_element(By.CSS_SELECTOR, selector)
-            break
-        except Exception:
-            pass
+    form, email_field, password_field, submit_btn = duke_find_login_fields(driver)
 
     if password_field is None:
         raise RuntimeError('Could not find Duke password field')
+    if email_field is None:
+        raise RuntimeError('Could not find Duke email field')
 
-    password_field.clear()
-    password_field.send_keys(duke_password)
-
-    submit_btn = None
-    for selector in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]', 'button[title="Login"]', 'button[title="Sign In"]']:
-        try:
-            submit_btn = driver.find_element(By.CSS_SELECTOR, selector)
-            break
-        except Exception:
-            pass
-
-    if submit_btn is None:
-        try:
-            submit_btn = driver.find_element(By.XPATH, '//button[@type="submit"] | //button[contains(., "Sign In")] | //button[contains(., "Login")] | //input[@type="submit"]')
-        except Exception:
-            pass
+    duke_fill_field(driver, email_field, duke_email)
+    duke_fill_field(driver, password_field, duke_password)
 
     if submit_btn is not None:
         driver.execute_script(clicker, submit_btn)
-        sleep(4)
+    elif form is not None:
+        driver.execute_script(
+            'if (arguments[0].requestSubmit) { arguments[0].requestSubmit(); } '
+            'else { arguments[0].submit(); }',
+            form,
+        )
     else:
         password_field.submit()
-        sleep(4)
+    sleep(4)
 
     if duke_is_logged_in(driver):
         print('Duke login successful.')
@@ -326,6 +356,16 @@ def duke_login(driver):
         raise RuntimeError(f'Duke login rejected: {error_message}')
     if still_on_login:
         raise RuntimeError('Duke login did not complete (still on the login page). Check duke_email/duke_password in Config.json.')
+
+    # Some pages after login lack a logout link; confirm from the homepage.
+    try:
+        driver.get('https://www.dukeimports.com/')
+        sleep(3)
+        if duke_is_logged_in(driver):
+            print('Duke login successful.')
+            return driver
+    except Exception:
+        pass
 
     print('Duke login submitted; could not confirm a logout link, continuing.')
     return driver

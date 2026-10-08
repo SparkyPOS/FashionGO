@@ -31,65 +31,12 @@ def duke_login(driver):
         print('Duke credentials not configured. Skipping Duke login.')
         return driver
 
-    driver.get('https://www.dukeimports.com/login.jhtm')
-    sleep(3)
-
-    email_field = None
-    for selector in ['input[name="username"]', '#username', 'input[name="login[username]"]', 'input[name="email"]', '#email', 'input[type="email"]', 'form[action*="login"] input[type="text"]']:
-        try:
-            email_field = driver.find_element(By.CSS_SELECTOR, selector)
-            break
-        except Exception:
-            pass
-
-    if email_field is None:
-        print('Could not find Duke email field. Skipping Duke login.')
+    from main import duke_login as main_duke_login
+    try:
+        return main_duke_login(driver)
+    except Exception as exc:
+        print(f'Duke login failed: {exc}')
         return driver
-
-    email_field.clear()
-    email_field.send_keys(duke_email)
-
-    password_field = None
-    for selector in ['input[name="password"]', '#password', 'input[name="login[password]"]', 'input[name="pass"]', '#pass', 'input[type="password"]']:
-        try:
-            password_field = driver.find_element(By.CSS_SELECTOR, selector)
-            break
-        except Exception:
-            pass
-
-    if password_field is None:
-        print('Could not find Duke password field. Skipping Duke login.')
-        return driver
-
-    password_field.clear()
-    password_field.send_keys(duke_password)
-
-    submit_btn = None
-    for selector in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]', 'button[title="Login"]', 'button[title="Sign In"]']:
-        try:
-            submit_btn = driver.find_element(By.CSS_SELECTOR, selector)
-            break
-        except Exception:
-            pass
-
-    if submit_btn is not None:
-        driver.execute_script(clicker, submit_btn)
-        sleep(4)
-    else:
-        password_field.submit()
-        sleep(4)
-
-    from main import duke_is_logged_in, duke_login_error_message
-    if duke_is_logged_in(driver):
-        print('Duke login successful.')
-    else:
-        error_message = duke_login_error_message(driver)
-        if error_message:
-            print(f'Duke login rejected: {error_message}')
-        else:
-            print('Duke login submitted; could not confirm a logout link. Verify duke_email/duke_password in Config.json.')
-
-    return driver
 
 
 if __name__ == "__main__":
