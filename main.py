@@ -511,8 +511,13 @@ def duke_scrape_product_page(driver, product_url):
             const results = [];
             for (const selector of selectors) {
                 document.querySelectorAll(selector).forEach((img) => {
-                    const src = img.getAttribute('src') || img.getAttribute('data-src') || img.getAttribute('data-zoom-image') || img.getAttribute('data-original');
+                    let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src');
                     if (!src) return;
+                    try {
+                        src = new URL(src, document.baseURI).href;
+                    } catch (e) {
+                        return;
+                    }
                     const lower = src.toLowerCase();
                     if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower)) return;
                     if (lower.includes('placeholder') || lower.includes('logo') || lower.includes('sprite')) return;
