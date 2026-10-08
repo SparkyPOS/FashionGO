@@ -331,6 +331,7 @@ def duke_scrape_product_page(driver, product_url):
 
     price = ''
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
+    bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
     prioritized_selectors = [
         '.price_cell', 'td.price_cell', '.priceCell', '.price-cell',
         '.price', 'span.price', 'td.price', 'div.price',
@@ -348,19 +349,33 @@ def duke_scrape_product_page(driver, product_url):
                 except Exception:
                     elements = []
                 for element in elements:
-                    for candidate in [
+                    text_candidates = [
                         element.text,
                         element.get_attribute('innerText'),
+                        element.get_attribute('textContent'),
+                    ]
+                    attribute_candidates = [
                         element.get_attribute('data-price-amount'),
                         element.get_attribute('data-price'),
                         element.get_attribute('content'),
-                    ]:
+                    ]
+                    for candidate in text_candidates:
                         if not candidate:
                             continue
                         match = re.search(price_pattern, candidate)
                         if match:
                             price = match.group(0).strip()
                             break
+                    if not price:
+                        # Attribute values are bare numbers (e.g. "12.9900")
+                        # without a currency symbol.
+                        for candidate in attribute_candidates:
+                            if not candidate:
+                                continue
+                            match = re.search(bare_number_pattern, candidate)
+                            if match:
+                                price = '$' + match.group(0).strip()
+                                break
                     if price:
                         break
                 if price:
@@ -377,6 +392,8 @@ def duke_scrape_product_page(driver, product_url):
             match = re.search(price_pattern, body_text)
         if match:
             price = match.group(match.lastindex or 0).strip()
+    if not price and re.search(r'(?:log\s*in|login|sign\s*in)[^\n]{0,40}(?:price|pricing)|(?:price|pricing)[^\n]{0,40}(?:log\s*in|login|sign\s*in)', body_text, re.I):
+        print('Price appears hidden behind login on this page; check your Duke credentials/session.')
 
     description = ''
     for selector in ['.product.attribute.description .value', '.description .value', '[data-role="description"]', '.product-info-main .description', '.product.description']:
