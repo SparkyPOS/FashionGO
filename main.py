@@ -503,6 +503,13 @@ def duke_scrape_product_page(driver, product_url):
         if match:
             description = re.sub(r'\s+', ' ', match.group(1)).strip()
     if description:
+        # Remove inline script/jQuery snippets that leak into page text
+        # (e.g. $( "div.ribbon..." ).css(...); }); blocks).
+        description = re.sub(r'\$\(.*?;', '', description, flags=re.S)
+        description = re.sub(r'\}\s*\)\s*;?', '', description)
+        # Drop footer boilerplate from the platform.
+        description = re.sub(r'Powered\s+By\s+WebJaguar.*', '', description, flags=re.I | re.S)
+        description = re.sub(r'\s+', ' ', description).strip()
         # Trim trailing page sections that follow the description block
         # (e.g. Specifications / Notification / Agent tabs on Duke pages).
         stop_match = re.search(r'\b(?:Specifications?|Notification|Agent|Reviews?|Related\s+Products?|You\s+may\s+also\s+like)\b', description, re.I)
