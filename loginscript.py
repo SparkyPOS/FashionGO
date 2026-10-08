@@ -65,7 +65,7 @@ def duke_login(driver):
     password_field.send_keys(duke_password)
 
     submit_btn = None
-    for selector in ['button[type="submit"]', 'input[type="submit"]', 'button[title="Login"]', 'button[title="Sign In"]']:
+    for selector in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]', 'button[title="Login"]', 'button[title="Sign In"]']:
         try:
             submit_btn = driver.find_element(By.CSS_SELECTOR, selector)
             break
@@ -78,6 +78,16 @@ def duke_login(driver):
     else:
         password_field.submit()
         sleep(4)
+
+    from main import duke_is_logged_in, duke_login_error_message
+    if duke_is_logged_in(driver):
+        print('Duke login successful.')
+    else:
+        error_message = duke_login_error_message(driver)
+        if error_message:
+            print(f'Duke login rejected: {error_message}')
+        else:
+            print('Duke login submitted; could not confirm a logout link. Verify duke_email/duke_password in Config.json.')
 
     return driver
 
