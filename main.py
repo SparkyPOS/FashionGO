@@ -502,30 +502,55 @@ def duke_scrape_product_page(driver, product_url):
         match = re.search(r'(?:Description|Details)\s*[:\n\r]+\s*(.*)', body_text, re.I | re.S)
         if match:
             description = re.sub(r'\s+', ' ', match.group(1)).strip()
+    if description:
+        # Trim trailing page sections that follow the description block
+        # (e.g. Specifications / Notification / Agent tabs on Duke pages).
+        stop_match = re.search(r'\b(?:Specifications?|Notification|Agent|Reviews?|Related\s+Products?|You\s+may\s+also\s+like)\b', description, re.I)
+        if stop_match and stop_match.start() > 0:
+            description = description[:stop_match.start()].strip(' :-\u2013')
 
     images = []
     try:
         images = driver.execute_script(r"""
             const seen = new Set();
-            const selectors = ['img[src]', 'img[data-src]', 'img[data-zoom-image]'];
             const results = [];
-            for (const selector of selectors) {
-                document.querySelectorAll(selector).forEach((img) => {
-                    let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src');
-                    if (!src) return;
-                    try {
-                        src = new URL(src, document.baseURI).href;
-                    } catch (e) {
-                        return;
-                    }
-                    const lower = src.toLowerCase();
-                    if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower)) return;
-                    if (lower.includes('placeholder') || lower.includes('logo') || lower.includes('sprite')) return;
-                    if (!seen.has(src)) {
-                        seen.add(src);
-                        results.push(src);
-                    }
-                });
+            const containerSelectors = [
+                '.product.media', '.product-media', '.fotorama', '.gallery',
+                '.product-image-gallery', '.product-images', '.product-image',
+                '.product-img-box', '.product-info-media', '.main-image',
+                '#product-image', '.item_image', '.product_image'
+            ];
+            let scopes = [];
+            for (const selector of containerSelectors) {
+                const found = document.querySelectorAll(selector);
+                if (found.length) {
+                    scopes = Array.from(found);
+                    break;
+                }
+            }
+            if (!scopes.length) scopes = [document];
+            const collect = (img) => {
+                let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src');
+                if (!src) return;
+                try {
+                    src = new URL(src, document.baseURI).href;
+                } catch (e) {
+                    return;
+                }
+                const lower = src.toLowerCase();
+                if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower)) return;
+                if (/placeholder|logo|sprite|star|rating|review|banner|icon|badge|button|closeout/.test(lower)) return;
+                const alt = (img.getAttribute('alt') || '').toLowerCase();
+                const cls = (img.className || '').toString().toLowerCase();
+                if (/star|rating|review|banner|icon|badge/.test(alt + ' ' + cls)) return;
+                if (img.closest('.review, .reviews, .rating, .ratings, [class*="review"], [class*="rating"], header, footer, nav')) return;
+                if (!seen.has(src)) {
+                    seen.add(src);
+                    results.push(src);
+                }
+            };
+            for (const scope of scopes) {
+                scope.querySelectorAll('img').forEach(collect);
             }
             return results.slice(0, 20);
         """)
