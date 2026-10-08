@@ -195,10 +195,47 @@ def sign_in(driver):
     return driver 
 
 
+def duke_is_logged_in(driver):
+    try:
+        return bool(driver.execute_script(r"""
+            const links = Array.from(document.querySelectorAll('a'));
+            return links.some(link => {
+                const href = (link.getAttribute('href') || '').toLowerCase();
+                const text = (link.textContent || '').toLowerCase();
+                return href.includes('logout') || text.includes('log out') || text.includes('logout') || text.includes('sign out');
+            });
+        """))
+    except Exception:
+        return False
+
+
+def duke_login_error_message(driver):
+    try:
+        return (driver.execute_script(r"""
+            const selectors = ['.error', '.errors', '.message-error', '.loginError', '.alert-danger', 'font[color="red"]', '.red'];
+            for (const selector of selectors) {
+                for (const el of document.querySelectorAll(selector)) {
+                    const text = (el.textContent || '').trim();
+                    if (text) return text;
+                }
+            }
+            const body = document.body ? document.body.innerText : '';
+            const match = body.match(/[^\n]*(invalid|incorrect|failed|not\s+recognized|does\s+not\s+match)[^\n]*(username|password|login|credentials)[^\n]*/i)
+                || body.match(/[^\n]*(username|password|login|credentials)[^\n]*(invalid|incorrect|failed|not\s+recognized|does\s+not\s+match)[^\n]*/i);
+            return match ? match[0].trim() : '';
+        """) or '').strip()
+    except Exception:
+        return ''
+
+
 def duke_login(driver):
     login_url = 'https://www.dukeimports.com/login.jhtm'
     driver.get(login_url)
     sleep(3)
+
+    if duke_is_logged_in(driver):
+        print('Duke session already logged in.')
+        return driver
 
     email_locators = [
         'input[name="username"]',
@@ -253,7 +290,7 @@ def duke_login(driver):
     password_field.send_keys(duke_password)
 
     submit_btn = None
-    for selector in ['button[type="submit"]', 'button[title="Login"]', 'button[title="Sign In"]']:
+    for selector in ['button[type="submit"]', 'input[type="submit"]', 'input[type="image"]', 'button[title="Login"]', 'button[title="Sign In"]']:
         try:
             submit_btn = driver.find_element(By.CSS_SELECTOR, selector)
             break
@@ -273,6 +310,24 @@ def duke_login(driver):
         password_field.submit()
         sleep(4)
 
+    if duke_is_logged_in(driver):
+        print('Duke login successful.')
+        return driver
+
+    error_message = duke_login_error_message(driver)
+    still_on_login = False
+    try:
+        driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+        still_on_login = True
+    except Exception:
+        pass
+
+    if error_message:
+        raise RuntimeError(f'Duke login rejected: {error_message}')
+    if still_on_login:
+        raise RuntimeError('Duke login did not complete (still on the login page). Check duke_email/duke_password in Config.json.')
+
+    print('Duke login submitted; could not confirm a logout link, continuing.')
     return driver
 
 
