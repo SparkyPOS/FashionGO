@@ -539,7 +539,12 @@ def duke_scrape_product_page(driver, product_url):
                 }
                 const lower = src.toLowerCase();
                 if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower)) return;
-                if (/placeholder|logo|sprite|star|rating|review|banner|icon|badge|button|closeout/.test(lower)) return;
+                let decoded = lower;
+                try { decoded = decodeURIComponent(lower); } catch (e) {}
+                const blockedFiles = ['star_0.gif', 'fullcasecloseoutsquare.jpg', 'solar icon.png'];
+                const fileName = decoded.split('?')[0].split('/').pop();
+                if (blockedFiles.includes(fileName)) return;
+                if (/placeholder|logo|sprite|star|rating|review|banner|icon|badge|button|closeout|solar/.test(decoded)) return;
                 const alt = (img.getAttribute('alt') || '').toLowerCase();
                 const cls = (img.className || '').toString().toLowerCase();
                 if (/star|rating|review|banner|icon|badge/.test(alt + ' ' + cls)) return;
