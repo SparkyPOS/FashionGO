@@ -689,6 +689,376 @@ def duke_scrape_category(driver, category_url, key):
         driver.implicitly_wait(10)
 
 
+CROSSROADS_BASE_URL = 'https://wholesale.crossroadsfamily.com'
+
+
+def crossroads_is_logged_in(driver):
+    try:
+        return bool(driver.execute_script(r"""
+            const links = Array.from(document.querySelectorAll('a, button'));
+            return links.some(el => {
+                const href = (el.getAttribute('href') || '').toLowerCase();
+                const text = (el.textContent || '').toLowerCase();
+                const onclick = (el.getAttribute('onclick') || '').toLowerCase();
+                return href.includes('logout') || href.includes('signout') || onclick.includes('logout')
+                    || text.includes('log out') || text.includes('logout') || text.includes('sign out');
+            });
+        """))
+    except Exception:
+        return False
+
+
+def crossroads_login(driver):
+    driver.get(CROSSROADS_BASE_URL + '/shop/?context=shop')
+    sleep(5)
+
+    if crossroads_is_logged_in(driver):
+        print('CrossRoads session already logged in.')
+        return driver
+
+    if not crossroads_email or not crossroads_password:
+        raise RuntimeError(
+            'CrossRoads credentials are not configured. Add CROSSROADS_EMAIL and CROSSROADS_PASSWORD '
+            'or fill crossroads_email/crossroads_password in Config.json.'
+        )
+
+    # The login form is a popup opened through the site's navbar helper.
+    try:
+        driver.execute_script("navbar.login({authProvider:'emun'});")
+    except Exception:
+        # Fallback: click any visible login/sign-in trigger in the navbar.
+        try:
+            trigger = driver.find_element(
+                By.XPATH,
+                '//a[contains(translate(normalize-space(.), "LOGIN", "login"), "login") or '
+                'contains(translate(normalize-space(.), "SIGN IN", "sign in"), "sign in")]'
+            )
+            driver.execute_script(clicker, trigger)
+        except Exception:
+            raise RuntimeError('Could not open the CrossRoads login popup (navbar.login failed).')
+    sleep(4)
+
+    # The popup may open in a new window/tab; switch to it if so.
+    main_handle = driver.current_window_handle
+    popup_handle = None
+    for handle in driver.window_handles:
+        if handle != main_handle:
+            popup_handle = handle
+            driver.switch_to.window(handle)
+            break
+
+    email_field = None
+    password_field = None
+    for selector in ['input[type="password"]', 'input[name="password"]', '#password']:
+        try:
+            password_field = driver.find_element(By.CSS_SELECTOR, selector)
+            break
+        except Exception:
+            pass
+
+    if password_field is None:
+        # The popup may be rendered inside an iframe on the same page.
+        for frame in driver.find_elements(By.TAG_NAME, 'iframe'):
+            try:
+                driver.switch_to.frame(frame)
+                password_field = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+                break
+            except Exception:
+                driver.switch_to.default_content()
+
+    if password_field is None:
+        raise RuntimeError('Could not find the CrossRoads login popup password field.')
+
+    scope = driver
+    try:
+        scope = password_field.find_element(By.XPATH, 'ancestor::form[1]')
+    except Exception:
+        pass
+    for selector in ['input[type="email"]', 'input[name="email"]', 'input[name="username"]', '#email', '#username', 'input[type="text"]']:
+        try:
+            email_field = scope.find_element(By.CSS_SELECTOR, selector)
+            break
+        except Exception:
+            pass
+
+    if email_field is None:
+        raise RuntimeError('Could not find the CrossRoads login popup email field.')
+
+    email_field.clear()
+    email_field.send_keys(crossroads_email)
+    password_field.clear()
+    password_field.send_keys(crossroads_password)
+
+    submit_btn = None
+    for selector in ['button[type="submit"]', 'input[type="submit"]', 'button']:
+        try:
+            submit_btn = scope.find_element(By.CSS_SELECTOR, selector)
+            break
+        except Exception:
+            pass
+    if submit_btn is not None:
+        driver.execute_script(clicker, submit_btn)
+    else:
+        password_field.submit()
+    sleep(5)
+
+    # Return to the main window/content after the popup closes.
+    try:
+        driver.switch_to.default_content()
+    except Exception:
+        pass
+    if popup_handle is not None:
+        try:
+            if popup_handle not in driver.window_handles:
+                driver.switch_to.window(main_handle)
+            elif driver.current_window_handle != main_handle:
+                driver.switch_to.window(main_handle)
+        except Exception:
+            pass
+    try:
+        driver.refresh()
+        sleep(4)
+    except Exception:
+        pass
+
+    if crossroads_is_logged_in(driver):
+        print('CrossRoads login successful.')
+    else:
+        print('CrossRoads login submitted; could not confirm a logout link, continuing.')
+    return driver
+
+
+def crossroads_get_product_links(driver):
+    try:
+        hrefs = driver.execute_script(r"""
+            const seen = new Set();
+            return Array.from(document.querySelectorAll('a'))
+                .map(link => link.href)
+                .filter(href => {
+                    if (!href || href.startsWith('javascript:')) return false;
+                    const lower = href.toLowerCase();
+                    if (lower.includes('/cart') || lower.includes('/checkout') || lower.includes('/login')) return false;
+                    return lower.includes('/shop/product') || lower.includes('/product/') || lower.includes('/productdetail')
+                        || lower.includes('itemid=') || lower.includes('productid=') || lower.includes('/item/');
+                })
+                .filter(href => {
+                    if (seen.has(href)) return false;
+                    seen.add(href);
+                    return true;
+                });
+        """) or []
+        return [href for href in hrefs if urlparse(href).netloc.lower() == 'wholesale.crossroadsfamily.com']
+    except Exception:
+        return []
+
+
+def crossroads_scrape_product_page(driver, product_url):
+    driver.get(product_url)
+    sleep(4)
+
+    body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
+
+    title = ''
+    for selector in ['h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1', 'h2.product-title']:
+        try:
+            title = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+            if title:
+                break
+        except Exception:
+            pass
+
+    sku = ''
+    for selector in ['.product-sku', '.sku', '.item-number', '.item-no', '[itemprop="sku"]']:
+        try:
+            sku = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+            if sku:
+                break
+        except Exception:
+            pass
+    if not sku:
+        match = re.search(r'(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*([A-Za-z0-9\-]+)', body_text, re.I)
+        if match:
+            sku = match.group(1).strip()
+
+    price = ''
+    price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
+    bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
+    for selector in [
+        '.product-price', '.price', 'span.price', '.item-price', '.wholesale-price',
+        '.price-box', '[itemprop="price"]', 'meta[itemprop="price"]', '[data-price]'
+    ]:
+        try:
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        except Exception:
+            elements = []
+        for element in elements:
+            for candidate in [element.text, element.get_attribute('innerText'), element.get_attribute('textContent')]:
+                if not candidate:
+                    continue
+                match = re.search(price_pattern, candidate)
+                if match:
+                    price = match.group(0).strip()
+                    break
+            if not price:
+                for candidate in [element.get_attribute('data-price'), element.get_attribute('content')]:
+                    if not candidate:
+                        continue
+                    match = re.search(bare_number_pattern, candidate)
+                    if match:
+                        price = '$' + match.group(0).strip()
+                        break
+            if price:
+                break
+        if price:
+            break
+    if not price:
+        match = re.search(r'Price\s*[:=]\s*(' + price_pattern + r')', body_text, re.I)
+        if not match:
+            match = re.search(price_pattern, body_text)
+        if match:
+            price = match.group(match.lastindex or 0).strip()
+    if not price and re.search(r'(?:log\s*in|login|sign\s*in)[^\n]{0,40}(?:price|pricing)|(?:price|pricing)[^\n]{0,40}(?:log\s*in|login|sign\s*in)', body_text, re.I):
+        print('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
+
+    description = ''
+    for selector in ['.product-description', '.description', '[itemprop="description"]', '.product-details-description', '.item-description']:
+        try:
+            description = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+            if description:
+                break
+        except Exception:
+            pass
+    if not description:
+        match = re.search(r'Description\s*[:\n\r]+\s*(.*?)(?:\n\s*\n|$)', body_text, re.I | re.S)
+        if match:
+            description = re.sub(r'\s+', ' ', match.group(1)).strip()
+
+    details = ''
+    for selector in ['.product-details', '.details', '.product-specs', '.specifications', '.product-attributes', '.item-details']:
+        try:
+            details = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+            if details:
+                break
+        except Exception:
+            pass
+    if not details:
+        match = re.search(r'Details\s*[:\n\r]+\s*(.*?)(?:\n\s*\n|$)', body_text, re.I | re.S)
+        if match:
+            details = re.sub(r'\s+', ' ', match.group(1)).strip()
+    if details and details == description:
+        details = ''
+
+    images = []
+    try:
+        images = driver.execute_script(r"""
+            const seen = new Set();
+            const results = [];
+            const containerSelectors = [
+                '.product-images', '.product-image', '.product-gallery', '.gallery',
+                '.item-images', '.item-image', '.carousel', '.product-media', '.main-image'
+            ];
+            let scopes = [];
+            for (const selector of containerSelectors) {
+                const found = document.querySelectorAll(selector);
+                if (found.length) {
+                    scopes = Array.from(found);
+                    break;
+                }
+            }
+            if (!scopes.length) scopes = [document];
+            const collect = (img) => {
+                let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src');
+                if (!src) return;
+                try {
+                    src = new URL(src, document.baseURI).href;
+                } catch (e) {
+                    return;
+                }
+                const lower = src.toLowerCase();
+                if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower) && !lower.includes('/images/')) return;
+                if (/placeholder|logo|sprite|star|rating|review|banner|icon|badge|button/.test(lower)) return;
+                const alt = (img.getAttribute('alt') || '').toLowerCase();
+                const cls = (img.className || '').toString().toLowerCase();
+                if (/star|rating|review|banner|icon|badge|logo/.test(alt + ' ' + cls)) return;
+                if (img.closest('header, footer, nav, .navbar, [class*="related"], [class*="recommend"]')) return;
+                if (!seen.has(src)) {
+                    seen.add(src);
+                    results.push(src);
+                }
+            };
+            for (const scope of scopes) {
+                scope.querySelectorAll('img').forEach(collect);
+            }
+            return results.slice(0, 20);
+        """) or []
+    except Exception:
+        images = []
+
+    if not title and not sku and not price and not description:
+        return None
+
+    return [title, sku, price, '', '', ' | '.join(i for i in [description, details] if i), '', ', '.join(images)]
+
+
+def crossroads_set_page(url, page_number):
+    if re.search(r'([?&])page=\d+', url):
+        return re.sub(r'([?&])page=\d+', r'\g<1>page=' + str(page_number), url)
+    separator = '&' if '?' in url else '?'
+    return f'{url}{separator}page={page_number}'
+
+
+def crossroads_scrape_category(driver, category_url, key):
+    # Selector-fallback loops probe many locators; with a long implicit wait
+    # every miss blocks for seconds, which makes the bot look stuck.
+    driver.implicitly_wait(0)
+    try:
+        try:
+            crossroads_login(driver)
+        except Exception as exc:
+            print(f'CrossRoads login failed: {exc}')
+            print('Continuing without login; prices may be hidden for guest visitors.')
+
+        seen_products = set()
+        page_number = 1
+        while True:
+            page_url = crossroads_set_page(category_url, page_number)
+            print(f'Opening category page: {page_url}')
+            driver.get(page_url)
+            sleep(5)
+
+            product_links = crossroads_get_product_links(driver)
+            print(f'Page {page_number}: found {len(product_links)} product link(s).')
+            if not product_links:
+                if page_number == 1:
+                    print('No product links found on the category page. Check the URL or your CrossRoads login.')
+                break
+
+            new_products = 0
+            for product_url in product_links:
+                normalized_url = product_url.split('#')[0]
+                if normalized_url in seen_products:
+                    continue
+                seen_products.add(normalized_url)
+                new_products += 1
+                print(f'Scraping {normalized_url}')
+                try:
+                    row = crossroads_scrape_product_page(driver, normalized_url)
+                    if row:
+                        csvWriter(row, key)
+                    else:
+                        print('Skipped (no product data found).')
+                except Exception as exc:
+                    print(f'Failed to scrape {normalized_url}: {exc}')
+
+            if new_products == 0:
+                print('No new products found on this page; stopping.')
+                break
+            page_number += 1
+        print(f'CrossRoads scraping finished. Visited {len(seen_products)} product page(s). Results saved to the "{key}" CSV.')
+    finally:
+        driver.implicitly_wait(10)
+
+
 def main(driver, number, scrap_driver):
     try:
         if number == 1:
@@ -846,6 +1216,18 @@ def main(driver, number, scrap_driver):
             csvMaker(key)
             duke_scrape_category(driver, duke_url, key)
 
+        if number == 5:
+            crossroads_url = input('CrossRoads category URL: ').strip()
+            if not crossroads_url:
+                print('No CrossRoads URL provided.')
+                return
+            key = input('CSV name (leave blank to use "crossroads"): ').strip()
+            if not key:
+                match = re.search(r'[?&]Category=([^&]+)', crossroads_url, re.I)
+                key = match.group(1) if match else 'crossroads'
+            csvMaker(key)
+            crossroads_scrape_category(driver, crossroads_url, key)
+
     except Exception as e:
         print(f'Scraping failed: {e}')
 
@@ -863,6 +1245,7 @@ if __name__ == '__main__':
     2. -> Scrap by Catalog
     3. -> Scrap by vendor link
     4. -> Scrap Duke Imports category URL
+    5. -> Scrap CrossRoads category URL
     """))
     main(driver, number, scrap_driver)
     # product_details_scrap(driver, ['https://www.fashiongo.net/Item/21638783?paKey=202405152c85431acbb0b1e8a2aaeeed7b29cb38&listkey=097a92c8-fcdf-4bb4-bbcc-cdf71b3ed01b'], 'test')

@@ -65,6 +65,8 @@ email = os.getenv('FASHIONGO_EMAIL') or _config_value('fashiongo_email', 'email'
 pasw = os.getenv('FASHIONGO_PASSWORD') or _config_value('fashiongo_password', 'password', 'pass')
 duke_email = os.getenv('DUKE_EMAIL') or _config_value('duke_email', 'duke_username')
 duke_password = os.getenv('DUKE_PASSWORD') or _config_value('duke_password', 'duke_pass')
+crossroads_email = os.getenv('CROSSROADS_EMAIL') or _config_value('crossroads_email', 'crossroads_username')
+crossroads_password = os.getenv('CROSSROADS_PASSWORD') or _config_value('crossroads_password', 'crossroads_pass')
 set_time = config.get('time', ['', ''])
 
 
