@@ -990,6 +990,53 @@ def crossroads_extract_price(driver):
     return ''
 
 
+CROSSROADS_MAIN_PRICE_JS = r"""
+    // Find the price actually displayed next to the product title: climb the
+    // title's ancestors and return the nearest currency amount, skipping
+    // tier/case/retail/compare prices and related-product tiles.
+    const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
+    const RELATED_SELECTOR = '[class*="related" i],[id*="related" i],[class*="recommend" i],[id*="recommend" i],' +
+        '[class*="carousel" i],[class*="slider" i],[class*="upsell" i],[class*="cross-sell" i],' +
+        '[class*="also-" i],[class*="similar" i],[class*="you-may" i],[class*="product-list" i],' +
+        '[class*="product-grid" i],[class*="listing" i],[class*="suggest" i]';
+    const BAD_CONTEXT = /tier|case|pack|dozen|bulk|qty|quantity|retail|msrp|srp|compare|was|save|strike|old|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
+    let title = null;
+    for (const sel of ['h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1']) {
+        title = document.querySelector(sel);
+        if (title && (title.textContent || '').trim()) break;
+        title = null;
+    }
+    if (!title) return '';
+    const isStruck = (el) => {
+        try {
+            if (el.closest('s, del, strike')) return true;
+            return getComputedStyle(el).textDecorationLine.includes('line-through');
+        } catch (e) { return false; }
+    };
+    const candidateIn = (scope) => {
+        for (const el of scope.querySelectorAll('*')) {
+            if (el.children.length) continue;
+            const text = (el.textContent || '').trim();
+            if (!text || text.length > 60 || !currency.test(text)) continue;
+            if (el.closest(RELATED_SELECTOR)) continue;
+            const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
+                (el.closest('[class]') ? el.closest('[class]').className.toString() : '') + ' ' + text).toLowerCase();
+            if (BAD_CONTEXT.test(context)) continue;
+            if (isStruck(el)) continue;
+            return text;
+        }
+        return '';
+    };
+    let node = title.parentElement;
+    for (let depth = 0; node && depth < 6; depth++) {
+        const found = candidateIn(node);
+        if (found) return found;
+        node = node.parentElement;
+    }
+    return '';
+"""
+
+
 CROSSROADS_RELATED_CONTEXT_JS = """
     const RELATED_SELECTOR = '[class*="related" i],[id*="related" i],[class*="recommend" i],[id*="recommend" i],' +
         '[class*="carousel" i],[class*="slider" i],[class*="upsell" i],[class*="cross-sell" i],' +
@@ -1055,7 +1102,17 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
         except Exception:
             pass
         sleep(1)
-    for selector in [
+    # First, take the price displayed next to the product title (the one the
+    # user actually sees); generic [class*=price] elements can carry tier/case
+    # or other secondary prices that don't match the page's displayed price.
+    try:
+        main_text = driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or ''
+    except Exception:
+        main_text = ''
+    match = re.search(price_pattern, main_text)
+    if match:
+        price = match.group(0).strip()
+    for selector in [] if price else [
         '.product-price.m-b-1', '.product-price', '.price', 'span.price', '.item-price', '.wholesale-price',
         '.price-box', '[itemprop="price"]', 'meta[itemprop="price"]', '[data-price]'
     ]:
