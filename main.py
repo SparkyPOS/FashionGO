@@ -717,8 +717,22 @@ def crossroads_is_logged_in(driver):
         return False
 
 
-def crossroads_login(driver):
-    driver.get(CROSSROADS_BASE_URL + '/shop/?context=shop')
+def crossroads_base_url(category_url=None):
+    # Category URLs may live on a subdomain (e.g. fragrance.wholesale.crossroadsfamily.com);
+    # log in and filter links on that same host.
+    try:
+        parsed = urlparse(category_url or '')
+        host = parsed.netloc.lower()
+        if host == 'crossroadsfamily.com' or host.endswith('.crossroadsfamily.com'):
+            return f'{parsed.scheme or "https"}://{parsed.netloc}'
+    except Exception:
+        pass
+    return CROSSROADS_BASE_URL
+
+
+def crossroads_login(driver, base_url=None):
+    base_url = base_url or CROSSROADS_BASE_URL
+    driver.get(base_url + '/shop/?context=shop')
     sleep(5)
 
     if crossroads_is_logged_in(driver):
@@ -837,7 +851,7 @@ def crossroads_login(driver):
     return driver
 
 
-def crossroads_get_product_links(driver):
+def crossroads_get_product_links(driver, allowed_host=None):
     try:
         hrefs = driver.execute_script(r"""
             const seen = new Set();
@@ -856,7 +870,34 @@ def crossroads_get_product_links(driver):
                     return true;
                 });
         """) or []
-        return [href for href in hrefs if urlparse(href).netloc.lower() == 'wholesale.crossroadsfamily.com']
+        allowed = (allowed_host or '').lower()
+        def host_ok(href):
+            host = urlparse(href).netloc.lower()
+            if allowed and host == allowed:
+                return True
+            return host == 'wholesale.crossroadsfamily.com' or host.endswith('.crossroadsfamily.com')
+        links = [href for href in hrefs if host_ok(href)]
+        if links:
+            return links
+        # Fallback: anchors inside product card/tile containers (emun shop grids).
+        hrefs = driver.execute_script(r"""
+            const seen = new Set();
+            const selectors = '[class*="product-card"] a, [class*="productCard"] a, ' +
+                '[class*="product-tile"] a, [class*="product-item"] a, ' +
+                '.card a, [class*="grid-item"] a, [class*="item-card"] a';
+            return Array.from(document.querySelectorAll(selectors))
+                .map(link => link.href)
+                .filter(href => {
+                    if (!href || href.startsWith('javascript:')) return false;
+                    const lower = href.toLowerCase();
+                    if (lower.includes('/cart') || lower.includes('/checkout') || lower.includes('/login')
+                        || lower.includes('/shop/?') || lower.endsWith('/shop/')) return false;
+                    if (seen.has(href)) return false;
+                    seen.add(href);
+                    return true;
+                });
+        """) or []
+        return [href for href in hrefs if host_ok(href)]
     except Exception:
         return []
 
@@ -1021,8 +1062,10 @@ def crossroads_scrape_category(driver, category_url, key):
     # every miss blocks for seconds, which makes the bot look stuck.
     driver.implicitly_wait(0)
     try:
+        base_url = crossroads_base_url(category_url)
+        allowed_host = urlparse(base_url).netloc.lower()
         try:
-            crossroads_login(driver)
+            crossroads_login(driver, base_url)
         except Exception as exc:
             print(f'CrossRoads login failed: {exc}')
             print('Continuing without login; prices may be hidden for guest visitors.')
@@ -1035,7 +1078,7 @@ def crossroads_scrape_category(driver, category_url, key):
             driver.get(page_url)
             sleep(5)
 
-            product_links = crossroads_get_product_links(driver)
+            product_links = crossroads_get_product_links(driver, allowed_host)
             print(f'Page {page_number}: found {len(product_links)} product link(s).')
             if not product_links:
                 if page_number == 1:
