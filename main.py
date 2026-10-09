@@ -933,8 +933,19 @@ def crossroads_scrape_product_page(driver, product_url):
     price = ''
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
+    # CrossRoads renders the price asynchronously into .product-price.m-b-1; wait for it.
+    for _ in range(10):
+        try:
+            if driver.execute_script(
+                "const el = document.querySelector('.product-price.m-b-1, .product-price');"
+                "return !!(el && el.textContent && el.textContent.trim());"
+            ):
+                break
+        except Exception:
+            pass
+        sleep(1)
     for selector in [
-        '.product-price', '.price', 'span.price', '.item-price', '.wholesale-price',
+        '.product-price.m-b-1', '.product-price', '.price', 'span.price', '.item-price', '.wholesale-price',
         '.price-box', '[itemprop="price"]', 'meta[itemprop="price"]', '[data-price]'
     ]:
         try:
@@ -949,6 +960,11 @@ def crossroads_scrape_product_page(driver, product_url):
                 if match:
                     price = match.group(0).strip()
                     break
+                if selector in ('.product-price.m-b-1', '.product-price'):
+                    match = re.search(bare_number_pattern, candidate)
+                    if match:
+                        price = '$' + match.group(0).strip()
+                        break
             if not price:
                 for candidate in [element.get_attribute('data-price'), element.get_attribute('content')]:
                     if not candidate:
