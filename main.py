@@ -916,10 +916,29 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
             if (el.shadowRoot) visit(el.shadowRoot);
         }
     };
+    // Second pass: leaf elements (e.g. <strong>$6.25</strong>) that carry a
+    // currency amount but no price-related class/id.
+    const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
+    const visitCurrency = (root) => {
+        for (const el of root.querySelectorAll('strong, b, span, em, h1, h2, h3, h4, h5, h6, p, td, div, label')) {
+            if (el.children.length) continue;
+            const text = (el.textContent || '').trim();
+            if (!text || text.length > 60 || !currency.test(text)) continue;
+            const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
+                (el.closest('[class]') ? el.closest('[class]').className.toString() : '')).toLowerCase();
+            if (/cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/.test(context)) continue;
+            texts.push(text);
+            if (el.shadowRoot) visitCurrency(el.shadowRoot);
+        }
+    };
     visit(document);
+    visitCurrency(document);
     for (const frame of document.querySelectorAll('iframe')) {
         try {
-            if (frame.contentDocument) visit(frame.contentDocument);
+            if (frame.contentDocument) {
+                visit(frame.contentDocument);
+                visitCurrency(frame.contentDocument);
+            }
         } catch (e) {}
     }
     return texts.slice(0, 50);
@@ -1044,6 +1063,12 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
     if not price:
         price = crossroads_extract_price(driver)
     if not price:
+        # Re-read the body text: the price may have rendered after the initial
+        # snapshot taken right after page load.
+        try:
+            body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or body_text
+        except Exception:
+            pass
         match = re.search(r'Price\s*[:=]\s*(' + price_pattern + r')', body_text, re.I)
         if not match:
             match = re.search(price_pattern, body_text)
