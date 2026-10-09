@@ -1003,8 +1003,9 @@ def crossroads_extract_price(driver):
 CROSSROADS_MAIN_PRICE_JS = r"""
     // Find the price actually displayed next to the product title: climb the
     // title's ancestors and return the most prominent VISIBLE currency amount,
-    // skipping tier/case/variant/retail/compare prices, hidden elements and
-    // related-product tiles. Picking the first match in DOM order is wrong:
+    // skipping retail/compare/struck prices, hidden elements and
+    // related-product tiles, and demoting tier/case/variant contexts.
+    // Picking the first match in DOM order is wrong:
     // emun pages render quantity-break/variant prices (e.g. $5.20) before the
     // big displayed price (e.g. $6.25), and hidden variant templates also
     // carry other prices.
@@ -1013,7 +1014,12 @@ CROSSROADS_MAIN_PRICE_JS = r"""
         '[class*="carousel" i],[class*="slider" i],[class*="upsell" i],[class*="cross-sell" i],' +
         '[class*="also-" i],[class*="similar" i],[class*="you-may" i],[class*="product-list" i],' +
         '[class*="product-grid" i],[class*="listing" i],[class*="suggest" i]';
-    const BAD_CONTEXT = /tier|case|pack|dozen|bulk|qty|quantity|retail|msrp|srp|compare|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
+    // HARD contexts are never the displayed wholesale price. SOFT contexts
+    // (tier/qty/case tables) usually aren't either, but emun pages sometimes
+    // render the main displayed price (e.g. <strong>$6.25</strong>) inside the
+    // quantity-break area, so soft matches are demoted rather than dropped.
+    const HARD_BAD_CONTEXT = /retail|msrp|srp|compare|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
+    const SOFT_BAD_CONTEXT = /tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
     let title = null;
     for (const sel of ['h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1']) {
         title = document.querySelector(sel);
@@ -1036,36 +1042,51 @@ CROSSROADS_MAIN_PRICE_JS = r"""
             return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
         } catch (e) { return true; }
     };
+    const collectElements = (scope, out) => {
+        for (const el of scope.querySelectorAll('*')) {
+            out.push(el);
+            if (el.shadowRoot) collectElements(el.shadowRoot, out);
+        }
+    };
     const candidatesIn = (scope) => {
         const found = [];
-        for (const el of scope.querySelectorAll('*')) {
+        const elements = [];
+        collectElements(scope, elements);
+        for (const el of elements) {
             if (el.children.length) continue;
             const text = (el.textContent || '').trim();
             if (!text || text.length > 60 || !currency.test(text)) continue;
             if (el.closest(RELATED_SELECTOR)) continue;
             const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
                 (el.closest('[class]') ? el.closest('[class]').className.toString() : '') + ' ' + text).toLowerCase();
-            if (BAD_CONTEXT.test(context)) continue;
+            if (HARD_BAD_CONTEXT.test(context)) continue;
             if (isStruck(el) || !isVisible(el)) continue;
+            const soft = SOFT_BAD_CONTEXT.test(context) ? 1 : 0;
             let fontSize = 0, fontWeight = 0;
             try {
                 const style = getComputedStyle(el);
                 fontSize = parseFloat(style.fontSize) || 0;
                 fontWeight = parseInt(style.fontWeight, 10) || 0;
             } catch (e) {}
+            // Bold tags (<strong>/<b>) or heavy computed weight mark the
+            // displayed price even when a secondary price uses a larger font.
+            const bold = (/^(strong|b)$/i.test(el.tagName) || fontWeight >= 600 ||
+                !!el.closest('strong, b')) ? 1 : 0;
             const rect = el.getBoundingClientRect();
             const distance = Math.abs(rect.top - titleRect.bottom) + Math.abs(rect.left - titleRect.left);
-            found.push({ text, fontSize, fontWeight, distance });
+            found.push({ text, soft, bold, fontSize, fontWeight, distance });
         }
         return found;
     };
     let node = title.parentElement;
-    for (let depth = 0; node && depth < 6; depth++) {
+    for (let depth = 0; node && depth < 8; depth++) {
         const found = candidatesIn(node);
         if (found.length) {
-            // Prefer the most prominent price (largest font, then boldest),
-            // breaking ties by visual proximity to the title.
-            found.sort((a, b) => (b.fontSize - a.fontSize) || (b.fontWeight - a.fontWeight) || (a.distance - b.distance));
+            // Prefer non-tier/qty contexts, then bold displayed prices, then
+            // the most prominent (largest font, boldest weight), breaking
+            // ties by visual proximity to the title.
+            found.sort((a, b) => (a.soft - b.soft) || (b.bold - a.bold) ||
+                (b.fontSize - a.fontSize) || (b.fontWeight - a.fontWeight) || (a.distance - b.distance));
             return found[0].text;
         }
         node = node.parentElement;
