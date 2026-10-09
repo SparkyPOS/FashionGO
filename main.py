@@ -902,7 +902,71 @@ def crossroads_get_product_links(driver, allowed_host=None):
         return []
 
 
-def crossroads_scrape_product_page(driver, product_url):
+CROSSROADS_PRICE_SWEEP_JS = r"""
+    const texts = [];
+    const visit = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+            const cls = ((el.className || '').toString() + ' ' + (el.id || '')).toLowerCase();
+            if (cls.includes('price')) {
+                const text = (el.textContent || '').trim();
+                if (text) texts.push(text);
+                const data = el.getAttribute('data-price') || el.getAttribute('content');
+                if (data) texts.push(data);
+            }
+            if (el.shadowRoot) visit(el.shadowRoot);
+        }
+    };
+    visit(document);
+    for (const frame of document.querySelectorAll('iframe')) {
+        try {
+            if (frame.contentDocument) visit(frame.contentDocument);
+        } catch (e) {}
+    }
+    return texts.slice(0, 50);
+"""
+
+
+def crossroads_extract_price(driver):
+    price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
+    bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
+    # Sweep every element whose class/id mentions "price", including shadow DOM
+    # and same-origin iframes (the emun shop renders price via JS components).
+    try:
+        texts = driver.execute_script(CROSSROADS_PRICE_SWEEP_JS) or []
+    except Exception:
+        texts = []
+    for text in texts:
+        match = re.search(price_pattern, text)
+        if match:
+            return match.group(0).strip()
+    for text in texts:
+        if re.search(r'log\s*in|sign\s*in|login', text, re.I):
+            continue
+        match = re.search(bare_number_pattern, text)
+        if match:
+            return '$' + match.group(0).strip()
+    # Last resort: product JSON embedded in scripts/state objects.
+    try:
+        html = driver.execute_script('return document.documentElement.outerHTML') or ''
+    except Exception:
+        html = ''
+    match = re.search(
+        r'"(?:wholesalePrice|unitPrice|price|Price|WholesalePrice|UnitPrice)"\s*:\s*"?(\d[\d,]*(?:\.\d+)?)"?',
+        html,
+    )
+    if match:
+        return '$' + match.group(1).strip()
+    return ''
+
+
+def crossroads_price_hidden_by_login(body_text):
+    return bool(re.search(
+        r'(?:log\s*in|login|sign\s*in)[^\n]{0,40}(?:price|pricing)|(?:price|pricing)[^\n]{0,40}(?:log\s*in|login|sign\s*in)',
+        body_text, re.I,
+    ))
+
+
+def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
     driver.get(product_url)
     sleep(4)
 
@@ -933,13 +997,13 @@ def crossroads_scrape_product_page(driver, product_url):
     price = ''
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
-    # CrossRoads renders the price asynchronously into .product-price.m-b-1; wait for it.
-    for _ in range(10):
+    # CrossRoads renders the price asynchronously; wait until a price-like
+    # element (including shadow DOM) actually contains a digit, not just any
+    # text (placeholders like "Login for pricing" must not end the wait).
+    for _ in range(12):
         try:
-            if driver.execute_script(
-                "const el = document.querySelector('.product-price.m-b-1, .product-price');"
-                "return !!(el && el.textContent && el.textContent.trim());"
-            ):
+            texts = driver.execute_script(CROSSROADS_PRICE_SWEEP_JS) or []
+            if any(re.search(r'\d', text) for text in texts):
                 break
         except Exception:
             pass
@@ -978,12 +1042,21 @@ def crossroads_scrape_product_page(driver, product_url):
         if price:
             break
     if not price:
+        price = crossroads_extract_price(driver)
+    if not price:
         match = re.search(r'Price\s*[:=]\s*(' + price_pattern + r')', body_text, re.I)
         if not match:
             match = re.search(price_pattern, body_text)
         if match:
             price = match.group(match.lastindex or 0).strip()
-    if not price and re.search(r'(?:log\s*in|login|sign\s*in)[^\n]{0,40}(?:price|pricing)|(?:price|pricing)[^\n]{0,40}(?:log\s*in|login|sign\s*in)', body_text, re.I):
+    if not price and crossroads_price_hidden_by_login(body_text):
+        if allow_relogin:
+            print('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
+            try:
+                crossroads_login(driver, crossroads_base_url(product_url))
+            except Exception as exc:
+                print(f'CrossRoads re-login failed: {exc}')
+            return crossroads_scrape_product_page(driver, product_url, allow_relogin=False)
         print('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
 
     description = ''
