@@ -914,9 +914,19 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
     const inRelated = (el) => {
         try { return !!el.closest(RELATED_SELECTOR); } catch (e) { return false; }
     };
+    // Hidden elements (variant templates, collapsed tier tables) carry prices
+    // the shopper never sees; demote them to the fallback list.
+    const isHidden = (el) => {
+        try {
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) return true;
+            const style = getComputedStyle(el);
+            return style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0';
+        } catch (e) { return false; }
+    };
     const push = (el, value) => {
         if (!value) return;
-        (inRelated(el) ? relatedTexts : texts).push(value);
+        ((inRelated(el) || isHidden(el)) ? relatedTexts : texts).push(value);
     };
     const visit = (root) => {
         for (const el of root.querySelectorAll('*')) {
@@ -992,14 +1002,18 @@ def crossroads_extract_price(driver):
 
 CROSSROADS_MAIN_PRICE_JS = r"""
     // Find the price actually displayed next to the product title: climb the
-    // title's ancestors and return the nearest currency amount, skipping
-    // tier/case/retail/compare prices and related-product tiles.
+    // title's ancestors and return the most prominent VISIBLE currency amount,
+    // skipping tier/case/variant/retail/compare prices, hidden elements and
+    // related-product tiles. Picking the first match in DOM order is wrong:
+    // emun pages render quantity-break/variant prices (e.g. $5.20) before the
+    // big displayed price (e.g. $6.25), and hidden variant templates also
+    // carry other prices.
     const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
     const RELATED_SELECTOR = '[class*="related" i],[id*="related" i],[class*="recommend" i],[id*="recommend" i],' +
         '[class*="carousel" i],[class*="slider" i],[class*="upsell" i],[class*="cross-sell" i],' +
         '[class*="also-" i],[class*="similar" i],[class*="you-may" i],[class*="product-list" i],' +
         '[class*="product-grid" i],[class*="listing" i],[class*="suggest" i]';
-    const BAD_CONTEXT = /tier|case|pack|dozen|bulk|qty|quantity|retail|msrp|srp|compare|was|save|strike|old|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
+    const BAD_CONTEXT = /tier|case|pack|dozen|bulk|qty|quantity|retail|msrp|srp|compare|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
     let title = null;
     for (const sel of ['h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1']) {
         title = document.querySelector(sel);
@@ -1007,13 +1021,23 @@ CROSSROADS_MAIN_PRICE_JS = r"""
         title = null;
     }
     if (!title) return '';
+    const titleRect = title.getBoundingClientRect();
     const isStruck = (el) => {
         try {
             if (el.closest('s, del, strike')) return true;
             return getComputedStyle(el).textDecorationLine.includes('line-through');
         } catch (e) { return false; }
     };
-    const candidateIn = (scope) => {
+    const isVisible = (el) => {
+        try {
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) return false;
+            const style = getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+        } catch (e) { return true; }
+    };
+    const candidatesIn = (scope) => {
+        const found = [];
         for (const el of scope.querySelectorAll('*')) {
             if (el.children.length) continue;
             const text = (el.textContent || '').trim();
@@ -1022,15 +1046,28 @@ CROSSROADS_MAIN_PRICE_JS = r"""
             const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
                 (el.closest('[class]') ? el.closest('[class]').className.toString() : '') + ' ' + text).toLowerCase();
             if (BAD_CONTEXT.test(context)) continue;
-            if (isStruck(el)) continue;
-            return text;
+            if (isStruck(el) || !isVisible(el)) continue;
+            let fontSize = 0, fontWeight = 0;
+            try {
+                const style = getComputedStyle(el);
+                fontSize = parseFloat(style.fontSize) || 0;
+                fontWeight = parseInt(style.fontWeight, 10) || 0;
+            } catch (e) {}
+            const rect = el.getBoundingClientRect();
+            const distance = Math.abs(rect.top - titleRect.bottom) + Math.abs(rect.left - titleRect.left);
+            found.push({ text, fontSize, fontWeight, distance });
         }
-        return '';
+        return found;
     };
     let node = title.parentElement;
     for (let depth = 0; node && depth < 6; depth++) {
-        const found = candidateIn(node);
-        if (found) return found;
+        const found = candidatesIn(node);
+        if (found.length) {
+            // Prefer the most prominent price (largest font, then boldest),
+            // breaking ties by visual proximity to the title.
+            found.sort((a, b) => (b.fontSize - a.fontSize) || (b.fontWeight - a.fontWeight) || (a.distance - b.distance));
+            return found[0].text;
+        }
         node = node.parentElement;
     }
     return '';
