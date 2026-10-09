@@ -491,7 +491,7 @@ def duke_scrape_product_page(driver, product_url):
         print('Price appears hidden behind login on this page; check your Duke credentials/session.')
 
     description = ''
-    for selector in ['.product.attribute.description .value', '.description .value', '[data-role="description"]', '.product-info-main .description', '.product.description']:
+    for selector in ['#details_long_desc', '.details_long_desc', '[id*="long_desc"]', '.product.attribute.description .value', '.description .value', '[data-role="description"]', '.product-info-main .description', '.product.description']:
         try:
             description = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
             if description:
@@ -521,6 +521,15 @@ def duke_scrape_product_page(driver, product_url):
             description,
             flags=re.I | re.S,
         )
+        description = description.strip()
+
+        # Drop the tab labels (Specifications / Notification / Agent) that can
+        # appear before the description text, and the store address/contact
+        # block wherever it occurs.
+        description = re.sub(r'^\s*(?:(?:Specifications?|Notification|Agent)\s+)+', '', description, flags=re.I)
+        description = re.sub(r'1105\s+Williams\s+Street[^$]*?(?:IN\s*)?46703\s*', '', description, flags=re.I)
+        description = re.sub(r'Phone\s*:\s*\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}\s*', '', description, flags=re.I)
+        description = re.sub(r'Email\s*:\s*\S+@\S+\s*', '', description, flags=re.I)
         description = description.strip()
 
         footer_patterns = [
