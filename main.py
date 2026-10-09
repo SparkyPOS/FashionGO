@@ -722,7 +722,8 @@ def crossroads_base_url(category_url=None):
     # log in and filter links on that same host.
     try:
         parsed = urlparse(category_url or '')
-        if parsed.netloc and parsed.netloc.lower().endswith('crossroadsfamily.com'):
+        host = parsed.netloc.lower()
+        if host == 'crossroadsfamily.com' or host.endswith('.crossroadsfamily.com'):
             return f'{parsed.scheme or "https"}://{parsed.netloc}'
     except Exception:
         pass
