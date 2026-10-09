@@ -513,12 +513,15 @@ def duke_scrape_product_page(driver, product_url):
 
         # Duke pages sometimes start with the site footer/address block instead of
         # the actual product content, so strip those lead-in boilerplate phrases.
+        description = re.sub(r'^\s*1105\s+Williams\s+Street.*?(?:46703|IN\s*46703)\s*', '', description, flags=re.I | re.S)
+        description = re.sub(r'^\s*Phone\s*:\s*.*?\bEmail\s*:\s*[^\s]+\s*', '', description, flags=re.I | re.S)
         description = re.sub(
-            r'^(?:\s*(?:1105\s+Williams\s+Street.*?(?:46703|IN\s*46703)|(?:Phone\s*:\s*.*?\bEmail\s*:\s*.*?))\s*(?:COMPANY\s+INFO\s*)?(?:About\s+Us\s*Contact\s+Us\s*FAQ\s*SUPPORT\s*Login/Register\s*My\s+Account\s*Sales\s+Rep\s+Login\s*POLICIES\s*Terms?\s*&?\s*Conditions\s*Shipping\s+Policy\s*Privacy\s+Policy\s*FOLLOW\s+US\s*©?\s*Webjaguar.*?All\s+rights\s+reserved\.)?\s*)',
+            r'^\s*(?:COMPANY\s+INFO\s+)?(?:About\s+Us\s+Contact\s+Us\s+FAQ\s+SUPPORT\s+Login/Register\s+My\s+Account\s+Sales\s+Rep\s+Login\s+POLICIES\s+Terms?\s*&?\s*Conditions\s+Shipping\s+Policy\s+Privacy\s+Policy\s+FOLLOW\s+US\s+©?\s*Webjaguar.*?All\s+rights\s+reserved\.)\s*',
             '',
             description,
             flags=re.I | re.S,
-        ).strip()
+        )
+        description = description.strip()
 
         footer_patterns = [
             r'(?i)\b(?:COMPANY\s+INFO|About\s+Us|Contact\s+Us|FAQ|SUPPORT|Login/Register|My\s+Account|Sales\s+Rep\s+Login|Terms?\s*&?\s*Conditions|Shipping\s+Policy|Privacy\s+Policy|FOLLOW\s+US)\b',
