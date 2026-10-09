@@ -510,6 +510,33 @@ def duke_scrape_product_page(driver, product_url):
         # Drop footer boilerplate from the platform.
         description = re.sub(r'Powered\s+By\s+WebJaguar.*', '', description, flags=re.I | re.S)
         description = re.sub(r'\s+', ' ', description).strip()
+
+        # Duke pages sometimes start with the site footer/address block instead of
+        # the actual product content, so strip those lead-in boilerplate phrases.
+        description = re.sub(r'^\s*1105\s+Williams\s+Street.*?(?:46703|IN\s*46703)\s*', '', description, flags=re.I | re.S)
+        description = re.sub(r'^\s*Phone\s*:\s*.*?\bEmail\s*:\s*[^\s]+\s*', '', description, flags=re.I | re.S)
+        description = re.sub(
+            r'^\s*(?:COMPANY\s+INFO\s+)?(?:About\s+Us\s+Contact\s+Us\s+FAQ\s+SUPPORT\s+Login/Register\s+My\s+Account\s+Sales\s+Rep\s+Login\s+POLICIES\s+Terms?\s*&?\s*Conditions\s+Shipping\s+Policy\s+Privacy\s+Policy\s+FOLLOW\s+US\s+©?\s*Webjaguar.*?All\s+rights\s+reserved\.)\s*',
+            '',
+            description,
+            flags=re.I | re.S,
+        )
+        description = description.strip()
+
+        footer_patterns = [
+            r'(?i)\b(?:COMPANY\s+INFO|About\s+Us|Contact\s+Us|FAQ|SUPPORT|Login/Register|My\s+Account|Sales\s+Rep\s+Login|Terms?\s*&?\s*Conditions|Shipping\s+Policy|Privacy\s+Policy|FOLLOW\s+US)\b',
+            r'(?i)\bPhone\s*:\b',
+            r'(?i)\bEmail\s*:\b',
+            r'©\s*Webjaguar',
+        ]
+        footer_start = -1
+        for pattern in footer_patterns:
+            match = re.search(pattern, description)
+            if match and (footer_start == -1 or match.start() < footer_start):
+                footer_start = match.start()
+        if footer_start > 0:
+            description = description[:footer_start].strip(' :-\u2013')
+
         # Trim trailing page sections that follow the description block
         # (e.g. Specifications / Notification / Agent tabs on Duke pages).
         stop_match = re.search(r'\b(?:Specifications?|Notification|Agent|Reviews?|Related\s+Products?|You\s+may\s+also\s+like)\b', description, re.I)
