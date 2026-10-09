@@ -904,14 +904,26 @@ def crossroads_get_product_links(driver, allowed_host=None):
 
 CROSSROADS_PRICE_SWEEP_JS = r"""
     const texts = [];
+    const relatedTexts = [];
+    // Elements inside related/recommended product tiles, carousels or listing
+    // grids carry OTHER products' prices and must not override the main price.
+    const RELATED_SELECTOR = '[class*="related" i],[id*="related" i],[class*="recommend" i],[id*="recommend" i],' +
+        '[class*="carousel" i],[class*="slider" i],[class*="upsell" i],[class*="cross-sell" i],' +
+        '[class*="also-" i],[class*="similar" i],[class*="you-may" i],[class*="product-list" i],' +
+        '[class*="product-grid" i],[class*="listing" i],[class*="suggest" i]';
+    const inRelated = (el) => {
+        try { return !!el.closest(RELATED_SELECTOR); } catch (e) { return false; }
+    };
+    const push = (el, value) => {
+        if (!value) return;
+        (inRelated(el) ? relatedTexts : texts).push(value);
+    };
     const visit = (root) => {
         for (const el of root.querySelectorAll('*')) {
             const cls = ((el.className || '').toString() + ' ' + (el.id || '')).toLowerCase();
             if (cls.includes('price')) {
-                const text = (el.textContent || '').trim();
-                if (text) texts.push(text);
-                const data = el.getAttribute('data-price') || el.getAttribute('content');
-                if (data) texts.push(data);
+                push(el, (el.textContent || '').trim());
+                push(el, el.getAttribute('data-price') || el.getAttribute('content'));
             }
             if (el.shadowRoot) visit(el.shadowRoot);
         }
@@ -927,7 +939,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
             const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
                 (el.closest('[class]') ? el.closest('[class]').className.toString() : '')).toLowerCase();
             if (/cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/.test(context)) continue;
-            texts.push(text);
+            push(el, text);
             if (el.shadowRoot) visitCurrency(el.shadowRoot);
         }
     };
@@ -941,7 +953,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
             }
         } catch (e) {}
     }
-    return texts.slice(0, 50);
+    return texts.concat(relatedTexts).slice(0, 50);
 """
 
 
@@ -976,6 +988,22 @@ def crossroads_extract_price(driver):
     if match:
         return '$' + match.group(1).strip()
     return ''
+
+
+CROSSROADS_RELATED_CONTEXT_JS = """
+    const RELATED_SELECTOR = '[class*="related" i],[id*="related" i],[class*="recommend" i],[id*="recommend" i],' +
+        '[class*="carousel" i],[class*="slider" i],[class*="upsell" i],[class*="cross-sell" i],' +
+        '[class*="also-" i],[class*="similar" i],[class*="you-may" i],[class*="product-list" i],' +
+        '[class*="product-grid" i],[class*="listing" i],[class*="suggest" i]';
+    try { return !!arguments[0].closest(RELATED_SELECTOR); } catch (e) { return false; }
+"""
+
+
+def crossroads_element_in_related(driver, element):
+    try:
+        return bool(driver.execute_script(CROSSROADS_RELATED_CONTEXT_JS, element))
+    except Exception:
+        return False
 
 
 def crossroads_price_hidden_by_login(body_text):
@@ -1036,6 +1064,10 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
         except Exception:
             elements = []
         for element in elements:
+            # Skip prices that belong to related/recommended product tiles,
+            # carousels or listing grids: they are other products' prices.
+            if crossroads_element_in_related(driver, element):
+                continue
             for candidate in [element.text, element.get_attribute('innerText'), element.get_attribute('textContent')]:
                 if not candidate:
                     continue
