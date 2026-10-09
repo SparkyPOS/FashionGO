@@ -510,6 +510,21 @@ def duke_scrape_product_page(driver, product_url):
         # Drop footer boilerplate from the platform.
         description = re.sub(r'Powered\s+By\s+WebJaguar.*', '', description, flags=re.I | re.S)
         description = re.sub(r'\s+', ' ', description).strip()
+
+        footer_patterns = [
+            r'(?i)\b(?:COMPANY\s+INFO|About\s+Us|Contact\s+Us|FAQ|Login/Register|My\s+Account|Sales\s+Rep\s+Login|Terms?\s*&?\s*Conditions|Shipping\s+Policy|Privacy\s+Policy|FOLLOW\s+US)\b',
+            r'(?i)\bPhone\s*:\b',
+            r'(?i)\bEmail\s*:\b',
+            r'©\s*Webjaguar',
+        ]
+        footer_start = -1
+        for pattern in footer_patterns:
+            match = re.search(pattern, description)
+            if match and (footer_start == -1 or match.start() < footer_start):
+                footer_start = match.start()
+        if footer_start > 0:
+            description = description[:footer_start].strip(' :-\u2013')
+
         # Trim trailing page sections that follow the description block
         # (e.g. Specifications / Notification / Agent tabs on Duke pages).
         stop_match = re.search(r'\b(?:Specifications?|Notification|Agent|Reviews?|Related\s+Products?|You\s+may\s+also\s+like)\b', description, re.I)
