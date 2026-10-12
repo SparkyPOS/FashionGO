@@ -1075,10 +1075,49 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
 """
 
 
+def crossroads_price_matches(text, price_pattern=r'[$€£]\s*\d[\d,]*(?:\.\d+)?'):
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+    matches = []
+    for match in re.finditer(price_pattern, text):
+        start, end = match.span()
+        prefix = (text[max(0, start - 40):start] or '').lower()
+        suffix = (text[end:min(len(text), end + 16)] or '').lower()
+        product_hint = bool(re.search(r'(?:^|[^\w])(?:product|our\s+price|unit\s+price|wholesale|price)\b', prefix, re.I))
+        # Ignore quantity/tier labels like "case price" or "12+" unless the
+        # nearby text clearly points to the real product price.
+        if re.search(tier_context, prefix, re.I) and not product_hint:
+            continue
+        if not product_hint and re.search(tier_context, suffix, re.I):
+            continue
+        value = match.group(0).strip()
+        if value:
+            matches.append(value)
+    return matches
+
+
 def crossroads_extract_price(driver):
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
     tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+
+    def price_matches(text, pattern):
+        if 'crossroads_price_matches' in globals():
+            return crossroads_price_matches(text, pattern)
+        matches = []
+        for match in re.finditer(pattern, text):
+            start, end = match.span()
+            prefix = (text[max(0, start - 40):start] or '').lower()
+            suffix = (text[end:min(len(text), end + 16)] or '').lower()
+            product_hint = bool(re.search(r'(?:^|[^\w])(?:product|our\s+price|unit\s+price|wholesale|price)\b', prefix, re.I))
+            if re.search(tier_context, prefix, re.I) and not product_hint:
+                continue
+            if not product_hint and re.search(tier_context, suffix, re.I):
+                continue
+            value = match.group(0).strip()
+            if value:
+                matches.append(value)
+        return matches
+
     # Sweep every element whose class/id mentions "price", including shadow DOM
     # and same-origin iframes (the emun shop renders price via JS components).
     try:
@@ -1105,11 +1144,7 @@ def crossroads_extract_price(driver):
     for text in texts:
         if re.search(r'log\s*in|sign\s*in|login', text, re.I):
             continue
-        if re.search(tier_context, text, re.I):
-            continue
-        matches = re.findall(price_pattern, text)
-        if matches:
-            candidates.extend(matches)
+        candidates.extend(price_matches(text, price_pattern))
     if candidates:
         return candidates[-1].strip()
     for text in texts:
