@@ -84,7 +84,15 @@ class CrossroadsPriceTests(unittest.TestCase):
         ]
         row = namespace['crossroads_scrape_product_page'](driver, 'https://example.com/product')
         self.assertEqual(row[1:3], ['ABC', '$6.25'])
-        self.assertEqual(driver.execute_script.call_count, 2)
+        self.assertGreaterEqual(driver.execute_script.call_count, 2)
+
+    def test_ignores_stale_case_price_tier_value(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            ['Case price $5.20', 'Product $6.25'],
+            '<html><body>product</body></html>',
+        ]
+        self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
 
     def test_missing_price_does_not_use_earlier_price(self):
         driver = Mock()

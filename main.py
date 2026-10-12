@@ -1052,13 +1052,40 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
 def crossroads_extract_price(driver):
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
+    tier_context = r'(?:as\s+low\s+as|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
     # Sweep every element whose class/id mentions "price", including shadow DOM
     # and same-origin iframes (the emun shop renders price via JS components).
     try:
         texts = driver.execute_script(CROSSROADS_PRICE_SWEEP_JS) or []
     except Exception:
         texts = []
+    if isinstance(texts, str):
+        texts = [texts]
+    elif not isinstance(texts, (list, tuple, set)):
+        texts = [texts]
+    normalized = []
+    for item in texts:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if not text:
+            continue
+        normalized.extend(line.strip() for line in text.splitlines() if line.strip())
+    texts = normalized
+    # A single JavaScript value can be returned as one string; iterating that as a
+    # sequence of characters truncates prices like "$6.25" to "$6" and makes
+    # tier-only values like "Case price $5.20" look like a real product price.
     for text in texts:
+        if re.search(r'log\s*in|sign\s*in|login', text, re.I):
+            continue
+        if re.search(tier_context, text, re.I):
+            continue
+        match = re.search(price_pattern, text)
+        if match:
+            return match.group(0).strip()
+    for text in texts:
+        if re.search(r'log\s*in|sign\s*in|login', text, re.I):
+            continue
         match = re.search(price_pattern, text)
         if match:
             return match.group(0).strip()
