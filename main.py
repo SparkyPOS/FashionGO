@@ -1349,10 +1349,10 @@ def crossroads_price_after_sku(body_text, sku):
 
 
 CROSSROADS_IMAGES_JS = r"""
-    // Collect product images, including ones rendered inside shadow DOM by the
-    // emun shop components. Two tiers: "strict" (clearly product gallery images)
-    // and "relaxed" (anything plausible) so that over-filtering can never leave
-    // a product with zero images when the page has some.
+    // Collect ALL product images, including ones rendered inside shadow DOM by
+    // the emun shop components. No size-based filtering: small images are kept
+    // too. Two tiers only control ordering: "strict" (clearly product gallery
+    // images) come first, then "relaxed" (anything else plausible).
     const seen = new Set();
     const strict = [];
     const relaxed = [];
@@ -1409,8 +1409,8 @@ CROSSROADS_IMAGES_JS = r"""
             const r = img.getBoundingClientRect();
             area = (r.width || 0) * (r.height || 0);
         }
-        const preferred = !!highRes || inZone(img, GALLERY) || area >= 200 * 200;
-        pushUrl(src, area, preferred && !(area && area < 80 * 80));
+        const preferred = !!highRes || inZone(img, GALLERY);
+        pushUrl(src, area, preferred);
     };
     const collectAnchor = (a) => {
         const href = resolve(a.getAttribute('href') || '');
@@ -1440,8 +1440,9 @@ CROSSROADS_IMAGES_JS = r"""
     for (const frame of document.querySelectorAll('iframe')) {
         try { if (frame.contentDocument) visit(frame.contentDocument); } catch (e) {}
     }
-    const picked = strict.length ? strict : relaxed;
-    picked.sort((a, b) => b.area - a.area);
+    strict.sort((a, b) => b.area - a.area);
+    relaxed.sort((a, b) => b.area - a.area);
+    const picked = strict.concat(relaxed);
     return picked.slice(0, 20).map(item => item.src);
 """
 
