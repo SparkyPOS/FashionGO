@@ -1439,6 +1439,8 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
                 const lower = src.toLowerCase();
                 if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower) && !lower.includes('/images/')) return;
                 if (/placeholder|logo|sprite|star|rating|review|banner|icon|badge|button/.test(lower)) return;
+                if (/(^|[^0-9])150x150([^0-9]|$)/.test(lower)) return;
+                if (/[?&](w|width)=150\b/.test(lower) && /[?&](h|height)=150\b/.test(lower)) return;
                 const alt = (img.getAttribute('alt') || '').toLowerCase();
                 const cls = (img.className || '').toString().toLowerCase();
                 if (/star|rating|review|banner|icon|badge|logo/.test(alt + ' ' + cls)) return;
