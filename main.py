@@ -902,6 +902,52 @@ def crossroads_get_product_links(driver, allowed_host=None):
         return []
 
 
+CROSSROADS_LISTING_PRICES_JS = r"""
+    // Map each product link on a category/listing page to the price displayed
+    // in its tile. The listing tile shows the real shopper-facing price (e.g.
+    // $6.25), so it beats any tier/variant price buried in the product page.
+    const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
+    const looksLikeProduct = (href) => {
+        if (!href || href.startsWith('javascript:')) return false;
+        const lower = href.toLowerCase();
+        if (lower.includes('/cart') || lower.includes('/checkout') || lower.includes('/login')) return false;
+        return lower.includes('/shop/product') || lower.includes('/product/') || lower.includes('/productdetail')
+            || lower.includes('itemid=') || lower.includes('productid=') || lower.includes('/item/');
+    };
+    const result = {};
+    for (const anchor of document.querySelectorAll('a')) {
+        if (!looksLikeProduct(anchor.href)) continue;
+        const key = anchor.href.split('#')[0];
+        if (result[key]) continue;
+        let node = anchor;
+        for (let depth = 0; node && depth < 6; depth++) {
+            // Stop climbing once the container holds other products' links:
+            // any price found there could belong to a different tile.
+            const links = new Set();
+            for (const inner of node.querySelectorAll('a')) {
+                if (looksLikeProduct(inner.href)) links.add(inner.href.split('#')[0]);
+            }
+            if (links.size > 1) break;
+            const match = ((node.innerText || '').trim()).match(currency);
+            if (match) {
+                result[key] = match[0].trim();
+                break;
+            }
+            node = node.parentElement;
+        }
+    }
+    return result;
+"""
+
+
+def crossroads_get_listing_prices(driver):
+    try:
+        prices = driver.execute_script(CROSSROADS_LISTING_PRICES_JS) or {}
+        return {url: price for url, price in prices.items() if price}
+    except Exception:
+        return {}
+
+
 CROSSROADS_PRICE_SWEEP_JS = r"""
     const texts = [];
     const relatedTexts = [];
@@ -1163,7 +1209,7 @@ def crossroads_price_after_sku(body_text, sku):
     return prices[-1].strip() if prices else ''
 
 
-def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
+def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, listing_price=''):
     driver.get(product_url)
     sleep(4)
 
@@ -1191,22 +1237,26 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
         if match:
             sku = match.group(1).strip()
 
-    price = ''
-    # Wait for the displayed dollar amount after this product's SKU, not an
-    # earlier tier price or a price belonging to another product.
-    for _ in range(12):
-        try:
-            body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
-            if not sku:
-                match = re.search(r'(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*([A-Za-z0-9\-]+)', body_text, re.I)
-                if match:
-                    sku = match.group(1).strip()
-            price = crossroads_price_after_sku(body_text, sku)
-            if price:
-                break
-        except Exception:
-            pass
-        sleep(1)
+    price = (listing_price or '').strip()
+    # The category listing tile shows the shopper-facing price for this exact
+    # product; when we captured it there, it is authoritative and skips the
+    # error-prone product-page heuristics (tier/variant prices like $5.20).
+    if not price:
+        # Wait for the displayed dollar amount after this product's SKU, not an
+        # earlier tier price or a price belonging to another product.
+        for _ in range(12):
+            try:
+                body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
+                if not sku:
+                    match = re.search(r'(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*([A-Za-z0-9\-]+)', body_text, re.I)
+                    if match:
+                        sku = match.group(1).strip()
+                price = crossroads_price_after_sku(body_text, sku)
+                if price:
+                    break
+            except Exception:
+                pass
+            sleep(1)
     if not price:
         # The SKU anchor can fail (SKU rendered differently or price in a
         # separate component); fall back to the title-anchored prominent-price
@@ -1225,7 +1275,7 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
                 crossroads_login(driver, crossroads_base_url(product_url))
             except Exception as exc:
                 print(f'CrossRoads re-login failed: {exc}')
-            return crossroads_scrape_product_page(driver, product_url, allow_relogin=False)
+            return crossroads_scrape_product_page(driver, product_url, allow_relogin=False, listing_price=listing_price)
         print('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
 
     description = ''
@@ -1337,6 +1387,7 @@ def crossroads_scrape_category(driver, category_url, key):
             sleep(5)
 
             product_links = crossroads_get_product_links(driver, allowed_host)
+            listing_prices = crossroads_get_listing_prices(driver)
             print(f'Page {page_number}: found {len(product_links)} product link(s).')
             if not product_links:
                 if page_number == 1:
@@ -1351,8 +1402,11 @@ def crossroads_scrape_category(driver, category_url, key):
                 seen_products.add(normalized_url)
                 new_products += 1
                 print(f'Scraping {normalized_url}')
+                listing_price = listing_prices.get(normalized_url) or listing_prices.get(product_url, '')
+                if listing_price:
+                    print(f'Using listing price from category page: {listing_price}')
                 try:
-                    row = crossroads_scrape_product_page(driver, normalized_url)
+                    row = crossroads_scrape_product_page(driver, normalized_url, listing_price=listing_price)
                     if row:
                         csvWriter(row, key)
                     else:

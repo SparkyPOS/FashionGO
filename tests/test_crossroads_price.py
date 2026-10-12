@@ -50,22 +50,38 @@ class CrossroadsPriceTests(unittest.TestCase):
         self.assertEqual(price_after_sku('SKU: ABC-123\n$5.20\nSKU: ABC-12\n$6.25', 'ABC-12'), '$6.25')
 
     def test_missing_sku_or_price_stays_empty(self):
-        for text, sku in [('$5.20', ''), ('$5.20', 'ABC'), ('$5.20\nSKU: ABC', 'ABC')]:
+        for text, sku in [('$5.20', ''), ('$5.20', 'ABC')]:
             with self.subTest(text=text, sku=sku):
                 self.assertEqual(price_after_sku(text, sku), '')
+
+    def test_uses_price_above_sku_in_same_block(self):
+        # Emun pages often render the displayed price above the SKU line.
+        self.assertEqual(price_after_sku('$5.20\nSKU: ABC', 'ABC'), '$5.20')
+        self.assertEqual(price_after_sku('SKU: OTHER\n$5.20\n$6.25\nSKU: ABC', 'ABC'), '$6.25')
 
     def test_does_not_borrow_related_product_price(self):
         for heading in ['Related Products', 'Recommended Products', 'Similar Products', 'You May Also Like', 'SKU: OTHER', 'Item # OTHER']:
             with self.subTest(heading=heading):
                 self.assertEqual(price_after_sku(f'SKU: ABC\n{heading}\n$5.20', 'ABC'), '')
 
+    def test_listing_price_overrides_page_heuristics(self):
+        driver = Mock()
+        driver.find_element.side_effect = LookupError
+        driver.execute_script.side_effect = [
+            '$5.20\nSKU: ABC\n$5.20',
+            [],
+        ]
+        row = namespace['crossroads_scrape_product_page'](
+            driver, 'https://example.com/product', listing_price='$6.25')
+        self.assertEqual(row[2], '$6.25')
+
     def test_waits_for_price_after_sku(self):
         driver = Mock()
         driver.find_element.side_effect = LookupError
         driver.execute_script.side_effect = [
-            '$5.20\nSKU: ABC',
-            '$5.20\nSKU: ABC',
-            '$5.20\nSKU: ABC\n$6.25',
+            'Loading\nSKU: ABC',
+            'Loading\nSKU: ABC',
+            'Loading\nSKU: ABC\n$6.25',
             [],
         ]
         row = namespace['crossroads_scrape_product_page'](driver, 'https://example.com/product')
@@ -75,7 +91,8 @@ class CrossroadsPriceTests(unittest.TestCase):
     def test_missing_price_does_not_use_earlier_price(self):
         driver = Mock()
         driver.find_element.side_effect = LookupError
-        driver.execute_script.return_value = '$5.20\nSKU: ABC'
+        body = 'SKU: ABC\nRelated Products\n$5.20'
+        driver.execute_script.side_effect = [body] * 13 + [[], '<html></html>', []]
         row = namespace['crossroads_scrape_product_page'](driver, 'https://example.com/product')
         self.assertEqual(row[2], '')
 
