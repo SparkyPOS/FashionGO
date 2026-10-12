@@ -14,6 +14,7 @@ names = {
     'crossroads_price_hidden_by_login',
     'crossroads_scrape_product_page',
     'crossroads_extract_price',
+    'crossroads_extract_product_metadata',
     'crossroads_image_file_size',
     'crossroads_sort_images_by_file_size',
 }
@@ -125,6 +126,15 @@ class CrossroadsPriceTests(unittest.TestCase):
             '<html><body>product</body></html>',
         ]
         self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
+
+    def test_extracts_product_metadata_fields(self):
+        metadata = namespace['crossroads_extract_product_metadata'](
+            'ITEM #: 12345\nMINIMUM QTY: 12\nDIMENSIONS: 8 x 8\nDESIGNER: River\nDescription: Premium candle'
+        )
+        self.assertEqual(metadata['ITEM #'], '12345')
+        self.assertEqual(metadata['MINIMUM QTY'], '12')
+        self.assertEqual(metadata['DIMENSIONS'], '8 x 8')
+        self.assertEqual(metadata['DESIGNER'], 'River')
 
 
 if __name__ == '__main__':
