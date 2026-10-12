@@ -1,6 +1,7 @@
 import ast
 from pathlib import Path
 import re
+import urllib.request
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -13,6 +14,8 @@ names = {
     'crossroads_price_hidden_by_login',
     'crossroads_scrape_product_page',
     'crossroads_extract_price',
+    'crossroads_image_file_size',
+    'crossroads_sort_images_by_file_size',
 }
 tree = ast.parse(source.read_text())
 functions = ast.Module(
@@ -21,9 +24,11 @@ functions = ast.Module(
 )
 namespace = {
     're': re,
+    'urllib': urllib,
     'By': SimpleNamespace(CSS_SELECTOR='css selector'),
     'sleep': Mock(),
     'CROSSROADS_PRICE_SWEEP_JS': 'return []',
+    'CROSSROADS_IMAGES_JS': 'return []',
 }
 exec(compile(functions, str(source), 'exec'), namespace)
 price_after_sku = namespace['crossroads_price_after_sku']
