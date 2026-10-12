@@ -1,4 +1,5 @@
 import re
+import urllib.request
 from utils import *
 from urllib.parse import urlparse
 
@@ -1347,6 +1348,152 @@ def crossroads_price_after_sku(body_text, sku):
     return prices[-1].strip() if prices else ''
 
 
+CROSSROADS_IMAGES_JS = r"""
+    // Collect product images, including ones rendered inside shadow DOM by the
+    // emun shop components. Two tiers: "strict" (clearly product gallery images)
+    // and "relaxed" (anything plausible) so that over-filtering can never leave
+    // a product with zero images when the page has some.
+    const seen = new Set();
+    const strict = [];
+    const relaxed = [];
+    const BAD_URL = /placeholder|logo|sprite|spinner|loading|star|rating|review|banner|icon|badge|button|favicon|captcha|\.svg(\?|$)/;
+    const BAD_CTX = /star|rating|review|banner|icon|badge|logo|avatar/;
+    const BAD_ZONE = 'header, footer, nav, .navbar, [class*="related" i], [class*="recommend" i], ' +
+        '[class*="upsell" i], [class*="cross-sell" i], [class*="you-may" i], [class*="similar" i]';
+    const GALLERY = '[class*="product-image" i], [class*="product-gallery" i], [class*="product-media" i], ' +
+        '[class*="main-image" i], [class*="item-image" i], [class*="gallery" i], [class*="carousel" i], ' +
+        '[class*="pdp" i], [id*="gallery" i], [id*="product-image" i]';
+    const resolve = (src) => {
+        if (!src) return null;
+        try { return new URL(src, document.baseURI).href; } catch (e) { return null; }
+    };
+    const pushUrl = (href, area, preferred) => {
+        if (!href || href.startsWith('data:') || href.startsWith('javascript:')) return;
+        if (BAD_URL.test(href.toLowerCase())) return;
+        if (seen.has(href)) return;
+        seen.add(href);
+        (preferred ? strict : relaxed).push({ src: href, area: area || 0 });
+    };
+    const largestFromSrcset = (el) => {
+        const srcset = el.getAttribute('data-srcset') || el.getAttribute('srcset');
+        if (!srcset) return null;
+        let best = null, bestW = 0;
+        for (const part of srcset.split(',')) {
+            const bits = part.trim().split(/\s+/);
+            if (!bits[0]) continue;
+            const w = bits[1] && /^\d+w$/.test(bits[1]) ? parseInt(bits[1]) : 0;
+            if (w >= bestW) { bestW = w; best = bits[0]; }
+        }
+        return best;
+    };
+    const inZone = (el, selector) => {
+        let node = el;
+        while (node) {
+            try { if (node.closest && node.closest(selector)) return true; } catch (e) {}
+            const root = node.getRootNode ? node.getRootNode() : null;
+            node = (root && root.host) ? root.host : null;
+        }
+        return false;
+    };
+    const collectImg = (img) => {
+        const highRes = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img);
+        const src = resolve(highRes || img.getAttribute('data-src') || img.currentSrc || img.getAttribute('src'));
+        if (!src) return;
+        const alt = (img.getAttribute('alt') || '').toLowerCase();
+        const cls = (img.className || '').toString().toLowerCase();
+        if (BAD_CTX.test(alt + ' ' + cls)) return;
+        if (inZone(img, BAD_ZONE)) return;
+        const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+        let area = nw * nh;
+        if (!area) {
+            const r = img.getBoundingClientRect();
+            area = (r.width || 0) * (r.height || 0);
+        }
+        const preferred = !!highRes || inZone(img, GALLERY) || area >= 200 * 200;
+        pushUrl(src, area, preferred && !(area && area < 80 * 80));
+    };
+    const collectAnchor = (a) => {
+        const href = resolve(a.getAttribute('href') || '');
+        if (!href || !/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(href)) return;
+        if (inZone(a, BAD_ZONE)) return;
+        pushUrl(href, 0, inZone(a, GALLERY));
+    };
+    const collectBackground = (el) => {
+        if (!inZone(el, GALLERY) || inZone(el, BAD_ZONE)) return;
+        let bg = '';
+        try { bg = getComputedStyle(el).backgroundImage || ''; } catch (e) {}
+        const match = bg.match(/url\((['"]?)(.*?)\1\)/);
+        if (!match || !match[2]) return;
+        const r = el.getBoundingClientRect();
+        pushUrl(resolve(match[2]), (r.width || 0) * (r.height || 0), true);
+    };
+    const visit = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+            const tag = el.tagName ? el.tagName.toLowerCase() : '';
+            if (tag === 'img') collectImg(el);
+            else if (tag === 'a') collectAnchor(el);
+            else collectBackground(el);
+            if (el.shadowRoot) visit(el.shadowRoot);
+        }
+    };
+    visit(document);
+    for (const frame of document.querySelectorAll('iframe')) {
+        try { if (frame.contentDocument) visit(frame.contentDocument); } catch (e) {}
+    }
+    const picked = strict.length ? strict : relaxed;
+    picked.sort((a, b) => b.area - a.area);
+    return picked.slice(0, 20).map(item => item.src);
+"""
+
+
+def crossroads_image_file_size(url, cookie_header='', timeout=10):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    if cookie_header:
+        headers['Cookie'] = cookie_header
+    try:
+        request = urllib.request.Request(url, headers=headers, method='HEAD')
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            length = response.headers.get('Content-Length')
+            if length and length.isdigit():
+                return int(length)
+    except Exception:
+        pass
+    try:
+        request = urllib.request.Request(url, headers=dict(headers, Range='bytes=0-0'))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            match = re.search(r'/(\d+)\s*$', response.headers.get('Content-Range') or '')
+            if match:
+                return int(match.group(1))
+            length = response.headers.get('Content-Length')
+            if length and length.isdigit() and response.status != 206:
+                return int(length)
+    except Exception:
+        pass
+    return 0
+
+
+def crossroads_sort_images_by_file_size(driver, urls):
+    # Upload order matters downstream: the first image becomes the primary
+    # product photo, so put the largest file (usually the highest quality
+    # shot) first.
+    urls = [u for u in urls if u]
+    if len(urls) <= 1:
+        return urls
+    cookie_header = ''
+    try:
+        cookie_header = '; '.join(
+            '{}={}'.format(c.get('name'), c.get('value'))
+            for c in driver.get_cookies() if c.get('name')
+        )
+    except Exception:
+        pass
+    sized = [(crossroads_image_file_size(url, cookie_header), index, url) for index, url in enumerate(urls)]
+    if not any(size for size, _, _ in sized):
+        return urls
+    sized.sort(key=lambda item: (-item[0], item[1]))
+    return [url for _, _, url in sized]
+
+
 def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, listing_price=''):
     driver.get(product_url)
     sleep(4)
@@ -1437,77 +1584,10 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
 
     images = []
     try:
-        images = driver.execute_script(r"""
-            const seen = new Set();
-            const results = [];
-            const containerSelectors = [
-                '.product-images', '.product-image', '.product-gallery', '.gallery',
-                '.item-images', '.item-image', '.carousel', '.product-media', '.main-image'
-            ];
-            let scopes = [];
-            for (const selector of containerSelectors) {
-                const found = document.querySelectorAll(selector);
-                if (found.length) {
-                    scopes = Array.from(found);
-                    break;
-                }
-            }
-            if (!scopes.length) scopes = [document];
-            const MIN_DIM = 300;
-            const largestFromSrcset = (img) => {
-                const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
-                if (!srcset) return null;
-                let best = null, bestW = 0;
-                for (const part of srcset.split(',')) {
-                    const bits = part.trim().split(/\s+/);
-                    if (!bits[0]) continue;
-                    const w = bits[1] && /^\d+w$/.test(bits[1]) ? parseInt(bits[1]) : 0;
-                    if (w >= bestW) { bestW = w; best = bits[0]; }
-                }
-                return best;
-            };
-            const collect = (img) => {
-                let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img) || img.getAttribute('data-src') || img.getAttribute('src');
-                if (!src) return;
-                const highRes = !!(img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img));
-                try {
-                    src = new URL(src, document.baseURI).href;
-                } catch (e) {
-                    return;
-                }
-                const lower = src.toLowerCase();
-                if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower) && !lower.includes('/images/')) return;
-                if (/placeholder|logo|sprite|star|rating|review|banner|icon|badge|button/.test(lower)) return;
-                if (/(^|[\/_.-])(thumb|thumbnail|thumbs|tiny|mini|small|sm)([\/_.-]|$)/.test(lower)) return;
-                const dimMatch = lower.match(/(^|[^0-9])(\d{2,4})x(\d{2,4})([^0-9]|$)/);
-                if (dimMatch && (parseInt(dimMatch[2]) < MIN_DIM || parseInt(dimMatch[3]) < MIN_DIM)) return;
-                const q = lower.match(/[?&](?:w|width)=(\d+)\b/);
-                const qh = lower.match(/[?&](?:h|height)=(\d+)\b/);
-                if ((q && parseInt(q[1]) < MIN_DIM) || (qh && parseInt(qh[1]) < MIN_DIM)) return;
-                if (!highRes) {
-                    const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
-                    if (nw && nh && (nw < MIN_DIM || nh < MIN_DIM)) return;
-                    if (!nw && !nh) {
-                        const r = img.getBoundingClientRect();
-                        if (r.width && r.height && (r.width < 150 || r.height < 150)) return;
-                    }
-                }
-                const alt = (img.getAttribute('alt') || '').toLowerCase();
-                const cls = (img.className || '').toString().toLowerCase();
-                if (/star|rating|review|banner|icon|badge|logo/.test(alt + ' ' + cls)) return;
-                if (img.closest('header, footer, nav, .navbar, [class*="related"], [class*="recommend"]')) return;
-                if (!seen.has(src)) {
-                    seen.add(src);
-                    results.push(src);
-                }
-            };
-            for (const scope of scopes) {
-                scope.querySelectorAll('img').forEach(collect);
-            }
-            return results.slice(0, 20);
-        """) or []
+        images = driver.execute_script(CROSSROADS_IMAGES_JS) or []
     except Exception:
         images = []
+    images = crossroads_sort_images_by_file_size(driver, images)
 
     if not title and not sku and not price and not description:
         return None
