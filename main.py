@@ -1239,29 +1239,11 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
 
     price = (listing_price or '').strip()
     # The category listing tile shows the shopper-facing price for this exact
-    # product; when we captured it there, it is authoritative and skips the
-    # error-prone product-page heuristics (tier/variant prices like $5.20).
+    # product; when we captured it there, it is authoritative.
+    # The SKU/body-text regex is intentionally not used as a normal fallback:
+    # it can grab stale tier/qty values like $5.20 before the actual product
+    # price. Prefer the title-scoped visible price and the generic DOM sweep.
     if not price:
-        # Wait for the displayed dollar amount after this product's SKU, not an
-        # earlier tier price or a price belonging to another product.
-        for _ in range(12):
-            try:
-                body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
-                if not sku:
-                    match = re.search(r'(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*([A-Za-z0-9\-]+)', body_text, re.I)
-                    if match:
-                        sku = match.group(1).strip()
-                price = crossroads_price_after_sku(body_text, sku)
-                if price:
-                    break
-            except Exception:
-                pass
-            sleep(1)
-    if not price:
-        # The SKU anchor can fail (SKU rendered differently or price in a
-        # separate component); fall back to the title-anchored prominent-price
-        # scan, then the generic price sweep, both of which already exclude
-        # related-product tiles.
         try:
             price = (driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or '').strip()
         except Exception:
