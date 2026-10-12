@@ -12,13 +12,19 @@ names = {
     'crossroads_price_after_sku',
     'crossroads_price_hidden_by_login',
     'crossroads_scrape_product_page',
+    'crossroads_extract_price',
 }
 tree = ast.parse(source.read_text())
 functions = ast.Module(
     body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names],
     type_ignores=[],
 )
-namespace = {'re': re, 'By': SimpleNamespace(CSS_SELECTOR='css selector'), 'sleep': Mock()}
+namespace = {
+    're': re,
+    'By': SimpleNamespace(CSS_SELECTOR='css selector'),
+    'sleep': Mock(),
+    'CROSSROADS_PRICE_SWEEP_JS': 'return []',
+}
 exec(compile(functions, str(source), 'exec'), namespace)
 price_after_sku = namespace['crossroads_price_after_sku']
 
@@ -72,6 +78,17 @@ class CrossroadsPriceTests(unittest.TestCase):
         driver.execute_script.return_value = '$5.20\nSKU: ABC'
         row = namespace['crossroads_scrape_product_page'](driver, 'https://example.com/product')
         self.assertEqual(row[2], '')
+
+    def test_extracts_price_from_data_title_attribute(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            [
+                'Snowed In - 12 oz. Pint Candle (SIP) $6.25',
+                'Related Products $5.20',
+            ],
+            '<html><body>product</body></html>',
+        ]
+        self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
 
 
 if __name__ == '__main__':
