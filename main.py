@@ -1315,6 +1315,45 @@ def crossroads_price_hidden_by_login(body_text):
     ))
 
 
+def crossroads_extract_product_metadata(body_text):
+    text = (body_text or '').replace('\r\n', '\n').replace('\r', '\n')
+    labels = (
+        ('ITEM #', r'(?:ITEM\s*#|ITEM\s*NO\.?|ITEM\s*NUMBER|ITEM)\b'),
+        ('MINIMUM QTY', r'(?:MINIMUM\s*QTY|MINIMUM\s*QUANTITY|MIN\s*QTY|QTY\s*MINIMUM)\b'),
+        ('DIMENSIONS', r'(?:DIMENSIONS?|DIMENSION)\b'),
+        ('DESIGNER', r'DESIGNER\b'),
+    )
+    metadata = {}
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        for label, pattern in labels:
+            match = re.search(rf'^{pattern}\s*[:#\-]?\s*(.+)$', line, re.I)
+            if match:
+                value = re.sub(r'\s+', ' ', match.group(1)).strip(' :;,-')
+                if value and value.lower() not in {'n/a', 'na', 'none', 'not available'}:
+                    metadata[label] = value
+                break
+
+    if len(metadata) < 4:
+        for label, pattern in labels:
+            if label in metadata:
+                continue
+            match = re.search(
+                rf'{pattern}\s*[:#\-]?\s*(.+?)(?=(?:\s*(?:ITEM\s*#|ITEM\s*NO\.?|ITEM\s*NUMBER|ITEM|MINIMUM\s*QTY|MINIMUM\s*QUANTITY|MIN\s*QTY|QTY\s*MINIMUM|DIMENSIONS?|DIMENSION|DESIGNER)\s*[:#\-]?|$))',
+                text,
+                re.I | re.S,
+            )
+            if match:
+                value = re.sub(r'\s+', ' ', match.group(1)).strip(' :;,-')
+                if value and value.lower() not in {'n/a', 'na', 'none', 'not available'}:
+                    metadata[label] = value
+
+    return metadata
+
+
 def crossroads_price_after_sku(body_text, sku):
     sku = re.sub(r'^(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*', '', sku.strip(), flags=re.I)
     if not sku:
@@ -1600,6 +1639,21 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     if details and details == description:
         details = ''
 
+    metadata = crossroads_extract_product_metadata(body_text)
+    metadata_block = ' | '.join(
+        f'{label}: {value}'
+        for label, value in [
+            ('ITEM #', metadata.get('ITEM #', '')),
+            ('MINIMUM QTY', metadata.get('MINIMUM QTY', '')),
+            ('DIMENSIONS', metadata.get('DIMENSIONS', '')),
+            ('DESIGNER', metadata.get('DESIGNER', '')),
+        ]
+        if value
+    )
+    description_text = ' | '.join(part for part in [description, details] if part)
+    if metadata_block:
+        description_text = ' | '.join(part for part in [description_text, metadata_block] if part)
+
     images = []
     try:
         images = driver.execute_script(CROSSROADS_IMAGES_JS) or []
@@ -1607,10 +1661,10 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
         images = []
     images = crossroads_sort_images_by_file_size(driver, images)
 
-    if not title and not sku and not price and not description:
+    if not title and not sku and not price and not description and not metadata_block:
         return None
 
-    return [title, sku, price, '', '', ' | '.join(i for i in [description, details] if i), '', ', '.join(images)]
+    return [title, sku, price, '', '', description_text, '', ', '.join(images)]
 
 
 def crossroads_set_page(url, page_number):
