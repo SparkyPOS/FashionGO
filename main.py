@@ -1146,8 +1146,21 @@ def crossroads_price_after_sku(body_text, sku):
         r'You\s+May\s+Also\s+Like\b)',
         after_sku, maxsplit=1, flags=re.I,
     )[0]
-    match = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', after_sku)
-    return match.group(0).strip() if match else ''
+    price = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', after_sku)
+    if price:
+        return price.group(0).strip()
+    # Emun product pages often render the displayed price ABOVE the SKU line.
+    # Look back within the same product block (bounded by the previous SKU or
+    # related-products marker) and take the price closest to this SKU.
+    before_sku = body_text[:match.start()]
+    before_sku = re.split(
+        r'(?:\n|\A)\s*(?:SKU\b|Item\s*(?:#|No\.?|Number)(?=\s|:|$)|'
+        r'(?:Related|Recommended|Similar)\s+Products\b|'
+        r'You\s+May\s+Also\s+Like\b)',
+        before_sku, flags=re.I,
+    )[-1]
+    prices = re.findall(r'\$\s*\d[\d,]*(?:\.\d+)?', before_sku)
+    return prices[-1].strip() if prices else ''
 
 
 def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
@@ -1194,6 +1207,17 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
         except Exception:
             pass
         sleep(1)
+    if not price:
+        # The SKU anchor can fail (SKU rendered differently or price in a
+        # separate component); fall back to the title-anchored prominent-price
+        # scan, then the generic price sweep, both of which already exclude
+        # related-product tiles.
+        try:
+            price = (driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or '').strip()
+        except Exception:
+            price = ''
+    if not price:
+        price = crossroads_extract_price(driver)
     if not price and crossroads_price_hidden_by_login(body_text):
         if allow_relogin:
             print('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
