@@ -907,6 +907,18 @@ CROSSROADS_LISTING_PRICES_JS = r"""
     // in its tile. The listing tile shows the real shopper-facing price (e.g.
     // $6.25), so it beats any tier/variant price buried in the product page.
     const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
+    // Tier/qty-break fallback lines (e.g. "As low as $5.20", "12+ $5.20")
+    // show a bulk price, not the shopper-facing tile price.
+    const TIER_LINE = /as\s+low\s+as|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|\d+\s*\+/i;
+    const tilePrice = (node) => {
+        for (const line of ((node.innerText || '')).split('\n')) {
+            const text = line.trim();
+            if (!text || TIER_LINE.test(text)) continue;
+            const match = text.match(currency);
+            if (match) return match[0].trim();
+        }
+        return '';
+    };
     const looksLikeProduct = (href) => {
         if (!href || href.startsWith('javascript:')) return false;
         const lower = href.toLowerCase();
@@ -928,9 +940,9 @@ CROSSROADS_LISTING_PRICES_JS = r"""
                 if (looksLikeProduct(inner.href)) links.add(inner.href.split('#')[0]);
             }
             if (links.size > 1) break;
-            const match = ((node.innerText || '').trim()).match(currency);
-            if (match) {
-                result[key] = match[0].trim();
+            const price = tilePrice(node);
+            if (price) {
+                result[key] = price;
                 break;
             }
             node = node.parentElement;
@@ -943,7 +955,14 @@ CROSSROADS_LISTING_PRICES_JS = r"""
 def crossroads_get_listing_prices(driver):
     try:
         prices = driver.execute_script(CROSSROADS_LISTING_PRICES_JS) or {}
-        return {url: price for url, price in prices.items() if price}
+        prices = {url: price for url, price in prices.items() if price}
+        # A page-wide banner (e.g. a stale "as low as $5.20" element) can leak
+        # the SAME value into every tile. A real category rarely prices every
+        # product identically, so treat a uniform map as unreliable.
+        if len(prices) >= 3 and len(set(prices.values())) == 1:
+            print(f'Ignoring listing prices: every tile shows {next(iter(prices.values()))}, likely a shared banner.')
+            return {}
+        return prices
     except Exception:
         return {}
 
@@ -960,6 +979,16 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
     const inRelated = (el) => {
         try { return !!el.closest(RELATED_SELECTOR); } catch (e) { return false; }
     };
+    // Tier/qty-break fallback values (e.g. a stale "$5.20" bulk price) must
+    // never beat the displayed price; demote them to the fallback list.
+    const TIER_CONTEXT = /as\s+low\s+as|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
+    const inTier = (el, value) => {
+        try {
+            const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
+                (el.closest('[class]') ? el.closest('[class]').className.toString() : '') + ' ' + (value || '')).toLowerCase();
+            return TIER_CONTEXT.test(context);
+        } catch (e) { return false; }
+    };
     // Hidden elements (variant templates, collapsed tier tables) carry prices
     // the shopper never sees; demote them to the fallback list.
     const isHidden = (el) => {
@@ -972,7 +1001,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
     };
     const push = (el, value) => {
         if (!value) return;
-        ((inRelated(el) || isHidden(el)) ? relatedTexts : texts).push(value);
+        ((inRelated(el) || isHidden(el) || inTier(el, value)) ? relatedTexts : texts).push(value);
     };
     const addAttributeText = (el) => {
         for (const key of ['data-title', 'title', 'aria-label']) {
@@ -1072,7 +1101,7 @@ CROSSROADS_MAIN_PRICE_JS = r"""
     // render the main displayed price (e.g. <strong>$6.25</strong>) inside the
     // quantity-break area, so soft matches are demoted rather than dropped.
     const HARD_BAD_CONTEXT = /retail|msrp|srp|compare|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
-    const SOFT_BAD_CONTEXT = /tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
+    const SOFT_BAD_CONTEXT = /as\s+low\s+as|tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
     let title = null;
     for (const sel of ['h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1']) {
         title = document.querySelector(sel);
@@ -1132,20 +1161,77 @@ CROSSROADS_MAIN_PRICE_JS = r"""
         return found;
     };
     let node = title.parentElement;
+    // Returning the first depth's candidates is how stale tier fallback values
+    // (e.g. $5.20) win: a tier row near the title gets returned before the
+    // climb reaches the container holding the real displayed price. Only
+    // return tier/qty (soft) candidates after the whole climb finds nothing
+    // better, preferring bold soft prices (emun sometimes renders the main
+    // <strong> price inside the quantity-break area).
+    const byProminence = (a, b) => (b.bold - a.bold) || (b.fontSize - a.fontSize) ||
+        (b.fontWeight - a.fontWeight) || (a.distance - b.distance);
+    let softFallback = null;
     for (let depth = 0; node && depth < 8; depth++) {
         const found = candidatesIn(node);
-        if (found.length) {
-            // Prefer non-tier/qty contexts, then bold displayed prices, then
-            // the most prominent (largest font, boldest weight), breaking
-            // ties by visual proximity to the title.
-            found.sort((a, b) => (a.soft - b.soft) || (b.bold - a.bold) ||
-                (b.fontSize - a.fontSize) || (b.fontWeight - a.fontWeight) || (a.distance - b.distance));
-            return found[0].text;
+        const clean = found.filter(c => !c.soft);
+        if (clean.length) {
+            clean.sort(byProminence);
+            return clean[0].text;
+        }
+        if (!softFallback && found.length) {
+            found.sort(byProminence);
+            softFallback = found[0];
         }
         node = node.parentElement;
     }
-    return '';
+    return softFallback ? softFallback.text : '';
 """
+
+
+CROSSROADS_TIER_PRICES_JS = r"""
+    // Collect currency amounts that appear in tier/qty-break/variant contexts
+    // (including hidden templates). Used to detect when a captured listing
+    // price is really a stale tier fallback value.
+    const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/g;
+    const TIER_CONTEXT = /as\s+low\s+as|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
+    const out = new Set();
+    const visit = (root) => {
+        for (const el of root.querySelectorAll('*')) {
+            if (!el.children.length) {
+                const text = (el.textContent || '').trim();
+                if (text && text.length <= 120 && currency.test(text)) {
+                    currency.lastIndex = 0;
+                    const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
+                        (el.closest('[class]') ? el.closest('[class]').className.toString() : '') + ' ' + text).toLowerCase();
+                    let hidden = false;
+                    try {
+                        const rect = el.getBoundingClientRect();
+                        const style = getComputedStyle(el);
+                        hidden = !rect.width || !rect.height || style.display === 'none' ||
+                            style.visibility === 'hidden' || style.opacity === '0';
+                    } catch (e) {}
+                    if (hidden || TIER_CONTEXT.test(context)) {
+                        for (const match of text.match(currency) || []) out.add(match.trim());
+                        currency.lastIndex = 0;
+                    }
+                }
+            }
+            if (el.shadowRoot) visit(el.shadowRoot);
+        }
+    };
+    visit(document);
+    return Array.from(out).slice(0, 50);
+"""
+
+
+def crossroads_normalize_price(value):
+    return re.sub(r'\s+', '', (value or '')).strip()
+
+
+def crossroads_tier_prices(driver):
+    try:
+        return {crossroads_normalize_price(p) for p in (driver.execute_script(CROSSROADS_TIER_PRICES_JS) or []) if p}
+    except Exception:
+        return set()
 
 
 CROSSROADS_RELATED_CONTEXT_JS = """
@@ -1243,11 +1329,19 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     # The SKU/body-text regex is intentionally not used as a normal fallback:
     # it can grab stale tier/qty values like $5.20 before the actual product
     # price. Prefer the title-scoped visible price and the generic DOM sweep.
+    try:
+        main_price = (driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or '').strip()
+    except Exception:
+        main_price = ''
+    if price and main_price and crossroads_normalize_price(price) != crossroads_normalize_price(main_price):
+        # A listing price that reappears on the product page only in a
+        # tier/qty context is a stale tier fallback value, not the shopper
+        # price; trust the displayed main price instead.
+        if crossroads_normalize_price(price) in crossroads_tier_prices(driver):
+            print(f'Listing price {price} matches a tier value on the product page; using displayed price {main_price}.')
+            price = main_price
     if not price:
-        try:
-            price = (driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or '').strip()
-        except Exception:
-            price = ''
+        price = main_price
     if not price:
         price = crossroads_extract_price(driver)
     if not price and crossroads_price_hidden_by_login(body_text):
