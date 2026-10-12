@@ -1353,6 +1353,7 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
                 print(f'CrossRoads re-login failed: {exc}')
             return crossroads_scrape_product_page(driver, product_url, allow_relogin=False, listing_price=listing_price)
         print('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
+    print(f'CrossRoads selected price for {product_url}: {price or "<empty>"}')
 
     description = ''
     for selector in ['.product-description', '.description', '[itemprop="description"]', '.product-details-description', '.item-description']:
