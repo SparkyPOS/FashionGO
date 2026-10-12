@@ -1118,6 +1118,31 @@ def crossroads_price_hidden_by_login(body_text):
     ))
 
 
+def crossroads_price_after_sku(body_text, sku):
+    sku = re.sub(r'^(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*', '', sku.strip(), flags=re.I)
+    if not sku:
+        return ''
+    sku_pattern = re.escape(sku) + r'(?![\w-])'
+    match = re.search(
+        r'\b(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*' + sku_pattern,
+        body_text, re.I,
+    )
+    if not match:
+        match = re.search(r'^\s*' + sku_pattern, body_text, re.M)
+    if not match:
+        return ''
+    after_sku = body_text[match.end():]
+    # Do not borrow a price from another product when this SKU has no price.
+    after_sku = re.split(
+        r'\n\s*(?:SKU\b|Item\s*(?:#|No\.?|Number)(?=\s|:|$)|'
+        r'(?:Related|Recommended|Similar)\s+Products\b|'
+        r'You\s+May\s+Also\s+Like\b)',
+        after_sku, maxsplit=1, flags=re.I,
+    )[0]
+    match = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', after_sku)
+    return match.group(0).strip() if match else ''
+
+
 def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
     driver.get(product_url)
     sleep(4)
@@ -1147,80 +1172,21 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True):
             sku = match.group(1).strip()
 
     price = ''
-    price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
-    bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
-    # CrossRoads renders the price asynchronously; wait until a price-like
-    # element (including shadow DOM) actually contains a digit, not just any
-    # text (placeholders like "Login for pricing" must not end the wait).
+    # Wait for the displayed dollar amount after this product's SKU, not an
+    # earlier tier price or a price belonging to another product.
     for _ in range(12):
         try:
-            texts = driver.execute_script(CROSSROADS_PRICE_SWEEP_JS) or []
-            if any(re.search(r'\d', text) for text in texts):
+            body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
+            if not sku:
+                match = re.search(r'(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*([A-Za-z0-9\-]+)', body_text, re.I)
+                if match:
+                    sku = match.group(1).strip()
+            price = crossroads_price_after_sku(body_text, sku)
+            if price:
                 break
         except Exception:
             pass
         sleep(1)
-    # First, take the price displayed next to the product title (the one the
-    # user actually sees); generic [class*=price] elements can carry tier/case
-    # or other secondary prices that don't match the page's displayed price.
-    try:
-        main_text = driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or ''
-    except Exception:
-        main_text = ''
-    match = re.search(price_pattern, main_text)
-    if match:
-        price = match.group(0).strip()
-    for selector in [] if price else [
-        '.product-price.m-b-1', '.product-price', '.price', 'span.price', '.item-price', '.wholesale-price',
-        '.price-box', '[itemprop="price"]', 'meta[itemprop="price"]', '[data-price]'
-    ]:
-        try:
-            elements = driver.find_elements(By.CSS_SELECTOR, selector)
-        except Exception:
-            elements = []
-        for element in elements:
-            # Skip prices that belong to related/recommended product tiles,
-            # carousels or listing grids: they are other products' prices.
-            if crossroads_element_in_related(driver, element):
-                continue
-            for candidate in [element.text, element.get_attribute('innerText'), element.get_attribute('textContent')]:
-                if not candidate:
-                    continue
-                match = re.search(price_pattern, candidate)
-                if match:
-                    price = match.group(0).strip()
-                    break
-                if selector in ('.product-price.m-b-1', '.product-price'):
-                    match = re.search(bare_number_pattern, candidate)
-                    if match:
-                        price = '$' + match.group(0).strip()
-                        break
-            if not price:
-                for candidate in [element.get_attribute('data-price'), element.get_attribute('content')]:
-                    if not candidate:
-                        continue
-                    match = re.search(bare_number_pattern, candidate)
-                    if match:
-                        price = '$' + match.group(0).strip()
-                        break
-            if price:
-                break
-        if price:
-            break
-    if not price:
-        price = crossroads_extract_price(driver)
-    if not price:
-        # Re-read the body text: the price may have rendered after the initial
-        # snapshot taken right after page load.
-        try:
-            body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or body_text
-        except Exception:
-            pass
-        match = re.search(r'Price\s*[:=]\s*(' + price_pattern + r')', body_text, re.I)
-        if not match:
-            match = re.search(price_pattern, body_text)
-        if match:
-            price = match.group(match.lastindex or 0).strip()
     if not price and crossroads_price_hidden_by_login(body_text):
         if allow_relogin:
             print('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
