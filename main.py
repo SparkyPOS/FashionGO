@@ -928,6 +928,12 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
         if (!value) return;
         ((inRelated(el) || isHidden(el)) ? relatedTexts : texts).push(value);
     };
+    const addAttributeText = (el) => {
+        for (const key of ['data-title', 'title', 'aria-label']) {
+            const value = (el.getAttribute(key) || '').trim();
+            if (value) push(el, value);
+        }
+    };
     const visit = (root) => {
         for (const el of root.querySelectorAll('*')) {
             const cls = ((el.className || '').toString() + ' ' + (el.id || '')).toLowerCase();
@@ -935,6 +941,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
                 push(el, (el.textContent || '').trim());
                 push(el, el.getAttribute('data-price') || el.getAttribute('content'));
             }
+            addAttributeText(el);
             if (el.shadowRoot) visit(el.shadowRoot);
         }
     };
