@@ -935,7 +935,7 @@ CROSSROADS_LISTING_PRICES_JS = r"""
     const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
     // Tier/qty-break fallback lines (e.g. "As low as $5.20", "12+ $5.20")
     // show a bulk price, not the shopper-facing tile price.
-    const TIER_LINE = /as\s+low\s+as|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|\d+\s*\+/i;
+    const TIER_LINE = /as\s+low\s+as|starting\s+at|from\s*\$|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|\d+\s*\+/i;
     const tilePrice = (node) => {
         for (const line of ((node.innerText || '')).split('\n')) {
             const text = line.trim();
@@ -1007,7 +1007,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
     };
     // Tier/qty-break fallback values (e.g. a stale "$5.20" bulk price) must
     // never beat the displayed price; demote them to the fallback list.
-    const TIER_CONTEXT = /as\s+low\s+as|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
+    const TIER_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
     const inTier = (el, value) => {
         try {
             const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
@@ -1078,7 +1078,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
 def crossroads_extract_price(driver):
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
-    tier_context = r'(?:as\s+low\s+as|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
     # Sweep every element whose class/id mentions "price", including shadow DOM
     # and same-origin iframes (the emun shop renders price via JS components).
     try:
@@ -1101,16 +1101,21 @@ def crossroads_extract_price(driver):
     # A single JavaScript value can be returned as one string; iterating that as a
     # sequence of characters truncates prices like "$6.25" to "$6" and makes
     # tier-only values like "Case price $5.20" look like a real product price.
+    candidates = []
     for text in texts:
         if re.search(r'log\s*in|sign\s*in|login', text, re.I):
             continue
         if re.search(tier_context, text, re.I):
             continue
-        match = re.search(price_pattern, text)
-        if match:
-            return match.group(0).strip()
+        matches = re.findall(price_pattern, text)
+        if matches:
+            candidates.extend(matches)
+    if candidates:
+        return candidates[-1].strip()
     for text in texts:
         if re.search(r'log\s*in|sign\s*in|login', text, re.I):
+            continue
+        if re.search(tier_context, text, re.I):
             continue
         match = re.search(price_pattern, text)
         if match:
@@ -1154,7 +1159,7 @@ CROSSROADS_MAIN_PRICE_JS = r"""
     // render the main displayed price (e.g. <strong>$6.25</strong>) inside the
     // quantity-break area, so soft matches are demoted rather than dropped.
     const HARD_BAD_CONTEXT = /retail|msrp|srp|compare|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
-    const SOFT_BAD_CONTEXT = /as\s+low\s+as|tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
+    const SOFT_BAD_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
     let title = null;
     for (const sel of ['h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1']) {
         title = document.querySelector(sel);
@@ -1245,7 +1250,7 @@ CROSSROADS_TIER_PRICES_JS = r"""
     // (including hidden templates). Used to detect when a captured listing
     // price is really a stale tier fallback value.
     const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/g;
-    const TIER_CONTEXT = /as\s+low\s+as|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
+    const TIER_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
     const out = new Set();
     const visit = (root) => {
         for (const el of root.querySelectorAll('*')) {
@@ -1314,6 +1319,7 @@ def crossroads_price_after_sku(body_text, sku):
     sku = re.sub(r'^(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*', '', sku.strip(), flags=re.I)
     if not sku:
         return ''
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
     sku_pattern = re.escape(sku) + r'(?![\w-])'
     match = re.search(
         r'\b(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*' + sku_pattern,
@@ -1323,6 +1329,18 @@ def crossroads_price_after_sku(body_text, sku):
         match = re.search(r'^\s*' + sku_pattern, body_text, re.M)
     if not match:
         return ''
+    def non_tier_prices(block):
+        prices = []
+        for line in (block or '').splitlines():
+            line = line.strip()
+            if not line or re.search(r'log\s*in|sign\s*in|login', line, re.I):
+                continue
+            if re.search(tier_context, line, re.I):
+                continue
+            price = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', line)
+            if price:
+                prices.append(price.group(0).strip())
+        return prices
     after_sku = body_text[match.end():]
     # Do not borrow a price from another product when this SKU has no price.
     after_sku = re.split(
@@ -1331,9 +1349,9 @@ def crossroads_price_after_sku(body_text, sku):
         r'You\s+May\s+Also\s+Like\b)',
         after_sku, maxsplit=1, flags=re.I,
     )[0]
-    price = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', after_sku)
-    if price:
-        return price.group(0).strip()
+    prices = non_tier_prices(after_sku)
+    if prices:
+        return prices[-1]
     # Emun product pages often render the displayed price ABOVE the SKU line.
     # Look back within the same product block (bounded by the previous SKU or
     # related-products marker) and take the price closest to this SKU.
@@ -1344,8 +1362,8 @@ def crossroads_price_after_sku(body_text, sku):
         r'You\s+May\s+Also\s+Like\b)',
         before_sku, flags=re.I,
     )[-1]
-    prices = re.findall(r'\$\s*\d[\d,]*(?:\.\d+)?', before_sku)
-    return prices[-1].strip() if prices else ''
+    prices = non_tier_prices(before_sku)
+    return prices[-1] if prices else ''
 
 
 CROSSROADS_IMAGES_JS = r"""

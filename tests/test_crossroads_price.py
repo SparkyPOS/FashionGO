@@ -99,6 +99,14 @@ class CrossroadsPriceTests(unittest.TestCase):
         ]
         self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
 
+    def test_ignores_stale_case_price_before_product_price_in_same_text_block(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            ['$5.20\nCase price $5.20\nProduct $6.25'],
+            '<html><body>product</body></html>',
+        ]
+        self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
+
     def test_missing_price_does_not_use_earlier_price(self):
         driver = Mock()
         driver.find_element.side_effect = LookupError
