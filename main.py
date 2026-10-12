@@ -572,9 +572,23 @@ def duke_scrape_product_page(driver, product_url):
                 }
             }
             if (!scopes.length) scopes = [document];
+            const MIN_DIM = 300;
+            const largestFromSrcset = (img) => {
+                const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
+                if (!srcset) return null;
+                let best = null, bestW = 0;
+                for (const part of srcset.split(',')) {
+                    const bits = part.trim().split(/\s+/);
+                    if (!bits[0]) continue;
+                    const w = bits[1] && /^\d+w$/.test(bits[1]) ? parseInt(bits[1]) : 0;
+                    if (w >= bestW) { bestW = w; best = bits[0]; }
+                }
+                return best;
+            };
             const collect = (img) => {
-                let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src');
+                let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img) || img.getAttribute('data-src') || img.getAttribute('src');
                 if (!src) return;
+                const highRes = !!(img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img));
                 try {
                     src = new URL(src, document.baseURI).href;
                 } catch (e) {
@@ -582,6 +596,17 @@ def duke_scrape_product_page(driver, product_url):
                 }
                 const lower = src.toLowerCase();
                 if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower)) return;
+                if (/(^|[\/_.-])(thumb|thumbnail|thumbs|tiny|mini|small|sm)([\/_.-]|$)/.test(lower)) return;
+                const dimMatch = lower.match(/(^|[^0-9])(\d{2,4})x(\d{2,4})([^0-9]|$)/);
+                if (dimMatch && (parseInt(dimMatch[2]) < MIN_DIM || parseInt(dimMatch[3]) < MIN_DIM)) return;
+                if (!highRes) {
+                    const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+                    if (nw && nh && (nw < MIN_DIM || nh < MIN_DIM)) return;
+                    if (!nw && !nh) {
+                        const r = img.getBoundingClientRect();
+                        if (r.width && r.height && (r.width < 150 || r.height < 150)) return;
+                    }
+                }
                 let decoded = lower;
                 try { decoded = decodeURIComponent(lower); } catch (e) {}
                 const blockedFiles = ['star_0.gif', 'fullcasecloseoutsquare.jpg', 'solar icon.png'];
@@ -1428,9 +1453,23 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
                 }
             }
             if (!scopes.length) scopes = [document];
+            const MIN_DIM = 300;
+            const largestFromSrcset = (img) => {
+                const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
+                if (!srcset) return null;
+                let best = null, bestW = 0;
+                for (const part of srcset.split(',')) {
+                    const bits = part.trim().split(/\s+/);
+                    if (!bits[0]) continue;
+                    const w = bits[1] && /^\d+w$/.test(bits[1]) ? parseInt(bits[1]) : 0;
+                    if (w >= bestW) { bestW = w; best = bits[0]; }
+                }
+                return best;
+            };
             const collect = (img) => {
-                let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src');
+                let src = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img) || img.getAttribute('data-src') || img.getAttribute('src');
                 if (!src) return;
+                const highRes = !!(img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img));
                 try {
                     src = new URL(src, document.baseURI).href;
                 } catch (e) {
@@ -1439,8 +1478,20 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
                 const lower = src.toLowerCase();
                 if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(lower) && !lower.includes('/images/')) return;
                 if (/placeholder|logo|sprite|star|rating|review|banner|icon|badge|button/.test(lower)) return;
-                if (/(^|[^0-9])150x150([^0-9]|$)/.test(lower)) return;
-                if (/[?&](w|width)=150\b/.test(lower) && /[?&](h|height)=150\b/.test(lower)) return;
+                if (/(^|[\/_.-])(thumb|thumbnail|thumbs|tiny|mini|small|sm)([\/_.-]|$)/.test(lower)) return;
+                const dimMatch = lower.match(/(^|[^0-9])(\d{2,4})x(\d{2,4})([^0-9]|$)/);
+                if (dimMatch && (parseInt(dimMatch[2]) < MIN_DIM || parseInt(dimMatch[3]) < MIN_DIM)) return;
+                const q = lower.match(/[?&](?:w|width)=(\d+)\b/);
+                const qh = lower.match(/[?&](?:h|height)=(\d+)\b/);
+                if ((q && parseInt(q[1]) < MIN_DIM) || (qh && parseInt(qh[1]) < MIN_DIM)) return;
+                if (!highRes) {
+                    const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
+                    if (nw && nh && (nw < MIN_DIM || nh < MIN_DIM)) return;
+                    if (!nw && !nh) {
+                        const r = img.getBoundingClientRect();
+                        if (r.width && r.height && (r.width < 150 || r.height < 150)) return;
+                    }
+                }
                 const alt = (img.getAttribute('alt') || '').toLowerCase();
                 const cls = (img.className || '').toString().toLowerCase();
                 if (/star|rating|review|banner|icon|badge|logo/.test(alt + ' ' + cls)) return;
