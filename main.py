@@ -765,26 +765,21 @@ CROSSROADS_BASE_URL = 'https://wholesale.crossroadsfamily.com'
 def crossroads_is_logged_in(driver):
     try:
         return bool(driver.execute_script(r"""
-            const pageText = ((document.body ? document.body.innerText : '') + ' ' + (location.href || '')).toLowerCase();
-            const loginText = /(log\s*in|sign\s*in|create\s+account|join\s+now|continue\s+with\s+google|google\s+login)/i;
-            const authLabel = /(?:logout|log\s*out|sign\s*out|log\s*off|sign\s*off|my\s+account|account|profile|orders?|saved\s+items|wishlist|welcome)/i;
-            let storageText = '';
-            try {
-                storageText = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || '').join(' ');
-            } catch (e) {}
-            const cookieText = (document.cookie || '') + ' ' + storageText;
-            const googleSession = /(?:google|oauth|id_token|access_token|auth_token|g_auth)/i.test(cookieText) &&
-                !loginText.test(pageText);
-            const matches = Array.from(document.querySelectorAll('a, button, span, div, li')).some(el => {
+            // Only trust explicit logged-in markers. Generic cookie/localStorage
+            // heuristics false-positive on anonymous sessions, which skips the
+            // real login and leaves prices hidden.
+            const logoutLabel = /(logout|log\s*out|sign\s*out|log\s*off|sign\s*off)/i;
+            const accountLabel = /(my\s+account|my\s+orders?|order\s+history|welcome\s*,)/i;
+            for (const el of document.querySelectorAll('a, button, span, div, li')) {
                 const href = (el.getAttribute('href') || '').toLowerCase();
                 const title = (el.getAttribute('title') || '').toLowerCase();
                 const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                const text = ((el.textContent || '') + ' ' + title + ' ' + aria).toLowerCase();
-                const combined = `${href} ${text}`;
-                if (/(logout|log\s*out|sign\s*out|log\s*off|sign\s*off)/i.test(combined)) return true;
-                return authLabel.test(text) && !loginText.test(text) && !loginText.test(pageText);
-            });
-            return googleSession || matches || (!!cookieText && /(?:auth|session|customer|user|token|google|oauth)/i.test(cookieText) && !loginText.test(pageText));
+                const text = ((el.textContent || '').trim() + ' ' + title + ' ' + aria).toLowerCase();
+                if (text.length > 120) continue; // skip large containers
+                if (logoutLabel.test(`${href} ${text}`) || accountLabel.test(text)) return true;
+            }
+            // No explicit logged-in marker: assume logged out so the login flow runs.
+            return false;
         """))
     except Exception:
         return False
@@ -819,11 +814,12 @@ def crossroads_login(driver, base_url=None):
         )
 
     # The login form is a popup opened through the site's navbar helper.
-    # Prefer the Google auth flow first because the site may already be logged in
-    # via Google on a previous session.
+    # Use the emun provider: it shows the email/password form that matches the
+    # configured credentials. The Google provider opens an OAuth popup that
+    # cannot be completed with email/password automation.
     login_attempts = [
-        "navbar.login({authProvider:'google'});",
         "navbar.login({authProvider:'emun'});",
+        "navbar.login();",
     ]
     popup_opened = False
     for script in login_attempts:
