@@ -169,6 +169,16 @@ class CrossroadsPriceTests(unittest.TestCase):
         row = namespace['crossroads_scrape_product_page'](driver, 'https://example.com/product', listing_price='$5.20')
         self.assertEqual(row[2], '$40.00')
 
+    def test_detects_login_gated_price_text(self):
+        for text in [
+            'Please log in to view price',
+            'Login to view pricing',
+            'member pricing requires login',
+            'Price hidden until sign in',
+        ]:
+            with self.subTest(text=text):
+                self.assertTrue(namespace['crossroads_price_hidden_by_login'](text))
+
     def test_extracts_product_metadata_fields(self):
         metadata = namespace['crossroads_extract_product_metadata'](
             'ITEM #: 12345\nMINIMUM QTY: 12\nDIMENSIONS: 8 x 8\nDESIGNER: River\nDescription: Premium candle'
