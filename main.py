@@ -1965,14 +1965,17 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     if not price:
         price = crossroads_extract_price(driver)
     if not price and crossroads_price_hidden_by_login(body_text):
-        if allow_relogin:
+        if allow_relogin and crossroads_email and crossroads_password:
             print('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
             try:
                 crossroads_login(driver, crossroads_base_url(product_url))
             except Exception as exc:
                 print(f'CrossRoads re-login failed: {exc}')
             return crossroads_scrape_product_page(driver, product_url, allow_relogin=False, listing_price=listing_price)
-        print('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
+        if crossroads_email and crossroads_password:
+            print('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
+        else:
+            print('Price appears hidden behind login on this page; continuing as a guest (no CrossRoads credentials configured).')
     print(f'CrossRoads selected price for {product_url}: {price or "<empty>"}')
 
     description = ''
@@ -2045,11 +2048,16 @@ def crossroads_scrape_category(driver, category_url, key):
     try:
         base_url = crossroads_base_url(category_url)
         allowed_host = urlparse(base_url).netloc.lower()
-        try:
-            crossroads_login(driver, base_url)
-        except Exception as exc:
-            print(f'CrossRoads login failed: {exc}')
-            print('Continuing without login; prices may be hidden for guest visitors.')
+        # Login is optional: only attempt it when credentials are configured,
+        # otherwise scrape as a guest visitor.
+        if crossroads_email and crossroads_password:
+            try:
+                crossroads_login(driver, base_url)
+            except Exception as exc:
+                print(f'CrossRoads login failed: {exc}')
+                print('Continuing without login; prices may be hidden for guest visitors.')
+        else:
+            print('No CrossRoads credentials configured; scraping as a guest without logging in.')
 
         seen_products = set()
         page_number = 1
