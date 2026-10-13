@@ -169,7 +169,31 @@ def _should_use_headless_browser(explicit_headless=False):
     return False
 
 
-def get_browser(headless=False, sel=False):
+def _chrome_user_data_dir():
+    configured = os.getenv('CHROME_USER_DATA_DIR')
+    if configured:
+        return configured, os.getenv('CHROME_PROFILE_DIRECTORY') or 'Default'
+
+    home = os.path.expanduser('~')
+    candidates = [
+        os.path.join(home, '.config', 'google-chrome'),
+        os.path.join(home, '.config', 'google-chrome-beta'),
+        os.path.join(home, '.config', 'chromium'),
+        os.path.join(home, '.config', 'BraveSoftware', 'Brave-Browser'),
+        os.path.join(home, 'AppData', 'Local', 'Google', 'Chrome', 'User Data'),
+        os.path.join(home, 'AppData', 'Local', 'Chromium', 'User Data'),
+    ]
+    for parent in candidates:
+        if os.path.isdir(parent):
+            if os.path.isdir(os.path.join(parent, 'Default')):
+                return parent, 'Default'
+            profiles = [name for name in os.listdir(parent) if os.path.isdir(os.path.join(parent, name))]
+            if profiles:
+                return parent, profiles[0]
+    return None, None
+
+
+def get_browser(headless=False, sel=False, incognito=None):
     download_directory = DATA_DIR
     agent = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/124.0.1216.0 Safari/537.2'
     driver_path = _install_chromedriver_fallback()
@@ -178,7 +202,7 @@ def get_browser(headless=False, sel=False):
     s = Service(executable_path=driver_path)
     chrome_binary = _resolve_chrome_binary()
 
-    def build_options(use_headless):
+    def build_options(use_headless, use_incognito):
         chrome_option = webdriver.ChromeOptions()
         if chrome_binary:
             chrome_option.binary_location = chrome_binary
@@ -189,8 +213,14 @@ def get_browser(headless=False, sel=False):
             chrome_option.add_argument('--disable-gpu')
             chrome_option.add_argument('--window-size=1920,1080')
             chrome_option.add_argument(f'user-agent={agent}')
+        if use_incognito:
+            chrome_option.add_argument('--incognito')
+        else:
+            user_data_dir, profile_dir = _chrome_user_data_dir()
+            if user_data_dir:
+                chrome_option.add_argument(f'--user-data-dir={user_data_dir}')
+                chrome_option.add_argument(f'--profile-directory={profile_dir}')
         chrome_option.add_argument('--log-level=3')
-        chrome_option.add_argument('--incognito')
         chrome_option.page_load_strategy = 'eager'
         chrome_option.add_argument('--ignore-certificate-errors')
         chrome_option.add_argument('--ignore-ssl-errors')
@@ -202,13 +232,14 @@ def get_browser(headless=False, sel=False):
         return chrome_option
 
     use_headless = headless or _should_use_headless_browser()
-    chrome_option = build_options(use_headless)
+    use_incognito = False if incognito is None else bool(incognito)
+    chrome_option = build_options(use_headless, use_incognito)
     try:
         driver = webdriver.Chrome(service=s, options=chrome_option)
         return driver
     except Exception:
         if not use_headless and _should_use_headless_browser():
-            chrome_option = build_options(True)
+            chrome_option = build_options(True, use_incognito)
             try:
                 return webdriver.Chrome(service=s, options=chrome_option)
             except Exception:
