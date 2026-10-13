@@ -72,11 +72,12 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 # print(p_images)
             except Exception as e:
                 pass 
+            p_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
 
             if fixed_price:
                 p_price = fixed_price
 
-            data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images]
+            data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images, p_text]
             if keyword and keyword.lower() not in ' '.join(str(i) for i in data).lower():
                 print('Skipped (keyword not found): ', p_title)
                 continue
@@ -634,7 +635,7 @@ def duke_scrape_product_page(driver, product_url):
     if not title and not sku and not price and not description:
         return None
 
-    return [title, sku, price, '', '', description, '', ', '.join(images)]
+    return [title, sku, price, '', '', description, '', ', '.join(images), body_text]
 
 
 def duke_scrape_category(driver, category_url, key):
@@ -1930,7 +1931,7 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     if not title and not sku and not price and not description and not metadata_block:
         return None
 
-    return [title, sku, price, '', '', description_text, '', ', '.join(images)]
+    return [title, sku, price, '', '', description_text, '', ', '.join(images), body_text]
 
 
 def crossroads_set_page(url, page_number):
