@@ -1130,6 +1130,59 @@ def crossroads_extract_price(driver):
                 return '$' + value
         return ''
 
+    price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
+    bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+
+    def product_hint(fragment):
+        if not fragment:
+            return False
+        if re.search(tier_context, fragment, re.I):
+            return False
+        return bool(re.search(r'(?:^|[^\w])(?:product|our\s+price|unit\s+price|wholesale|price)\b', fragment, re.I))
+
+    def price_matches(text, pattern):
+        if 'crossroads_price_matches' in globals():
+            return crossroads_price_matches(text, pattern)
+        matches = []
+        for line in (text or '').splitlines():
+            line = line.strip()
+            if not line or re.search(r'log\s*in|sign\s*in|login', line, re.I):
+                continue
+            if re.search(tier_context, line, re.I) and not product_hint(line):
+                continue
+            for match in re.finditer(pattern, line):
+                start, end = match.span()
+                prefix = (line[max(0, start - 40):start] or '').lower()
+                suffix = (line[end:min(len(line), end + 16)] or '').lower()
+                prefix_hint = product_hint(prefix)
+                suffix_hint = product_hint(suffix)
+                if re.search(tier_context, prefix, re.I) and not prefix_hint:
+                    continue
+                if not prefix_hint and re.search(tier_context, suffix, re.I):
+                    continue
+                if suffix_hint and not prefix_hint:
+                    continue
+                value = match.group(0).strip()
+                if value:
+                    matches.append(value)
+        return matches
+
+    def highest_price(prices):
+        best = ''
+        best_value = None
+        for price in prices:
+            value = re.search(r'\d[\d,]*(?:\.\d+)?', str(price))
+            if not value:
+                continue
+            amount = float(value.group(0).replace(',', ''))
+            if best_value is None or amount > best_value:
+                best = str(price).strip()
+                best_value = amount
+        return best
+
+    # Option 5 pages sometimes expose the canonical price in a snippet field.
+    # Use that exact value first, but keep the existing price sweep as a fallback.
     try:
         texts = driver.execute_script(CROSSROADS_PRICE_SWEEP_JS) or []
     except Exception:
@@ -1143,14 +1196,39 @@ def crossroads_extract_price(driver):
         if item is None:
             continue
         text = str(item).strip()
-        if text:
-            normalized.extend(line.strip() for line in text.splitlines() if line.strip())
+        if not text:
+            continue
+        normalized.extend(line.strip() for line in text.splitlines() if line.strip())
     texts = normalized
     for text in texts:
         snippet = extract_snippet_value(text)
         if snippet:
             return snippet
 
+    # Sweep every element whose class/id mentions "price", including shadow DOM
+    # and same-origin iframes (the emun shop renders price via JS components).
+    candidates = []
+    for text in texts:
+        if re.search(r'log\s*in|sign\s*in|login', text, re.I):
+            continue
+        candidates.extend(price_matches(text, price_pattern))
+    if candidates:
+        return highest_price(candidates)
+    for text in texts:
+        if re.search(r'log\s*in|sign\s*in|login', text, re.I):
+            continue
+        if re.search(tier_context, text, re.I):
+            continue
+        match = re.search(price_pattern, text)
+        if match:
+            return match.group(0).strip()
+    for text in texts:
+        if re.search(r'log\s*in|sign\s*in|login', text, re.I):
+            continue
+        match = re.search(bare_number_pattern, text)
+        if match:
+            return '$' + match.group(0).strip()
+    # Last resort: product JSON embedded in scripts/state objects.
     try:
         html = driver.execute_script('return document.documentElement.outerHTML') or ''
     except Exception:
@@ -1158,8 +1236,13 @@ def crossroads_extract_price(driver):
     snippet = extract_snippet_value(html)
     if snippet:
         return snippet
-
-    price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
+    match = re.search(
+        r'"(?:wholesalePrice|unitPrice|price|Price|WholesalePrice|UnitPrice)"\s*:\s*"?(\d[\d,]*(?:\.\d+)?)"?',
+        html,
+    )
+    if match:
+        return '$' + match.group(1).strip()
+    return ''
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
     tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
 
