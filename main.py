@@ -766,8 +766,15 @@ def crossroads_is_logged_in(driver):
     try:
         return bool(driver.execute_script(r"""
             const pageText = ((document.body ? document.body.innerText : '') + ' ' + (location.href || '')).toLowerCase();
-            const loginText = /(log\s*in|sign\s*in|create\s+account|join\s+now)/i;
+            const loginText = /(log\s*in|sign\s*in|create\s+account|join\s+now|continue\s+with\s+google|google\s+login)/i;
             const authLabel = /(?:logout|log\s*out|sign\s*out|log\s*off|sign\s*off|my\s+account|account|profile|orders?|saved\s+items|wishlist|welcome)/i;
+            let storageText = '';
+            try {
+                storageText = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || '').join(' ');
+            } catch (e) {}
+            const cookieText = (document.cookie || '') + ' ' + storageText;
+            const googleSession = /(?:google|oauth|id_token|access_token|auth_token|g_auth)/i.test(cookieText) &&
+                !loginText.test(pageText);
             const matches = Array.from(document.querySelectorAll('a, button, span, div, li')).some(el => {
                 const href = (el.getAttribute('href') || '').toLowerCase();
                 const title = (el.getAttribute('title') || '').toLowerCase();
@@ -777,7 +784,7 @@ def crossroads_is_logged_in(driver):
                 if (/(logout|log\s*out|sign\s*out|log\s*off|sign\s*off)/i.test(combined)) return true;
                 return authLabel.test(text) && !loginText.test(text) && !loginText.test(pageText);
             });
-            return matches || (!!document.cookie && /(?:auth|session|customer|user|token)/i.test(document.cookie) && !loginText.test(pageText));
+            return googleSession || matches || (!!cookieText && /(?:auth|session|customer|user|token|google|oauth)/i.test(cookieText) && !loginText.test(pageText));
         """))
     except Exception:
         return False
@@ -812,9 +819,21 @@ def crossroads_login(driver, base_url=None):
         )
 
     # The login form is a popup opened through the site's navbar helper.
-    try:
-        driver.execute_script("navbar.login({authProvider:'emun'});")
-    except Exception:
+    # Prefer the Google auth flow first because the site may already be logged in
+    # via Google on a previous session.
+    login_attempts = [
+        "navbar.login({authProvider:'google'});",
+        "navbar.login({authProvider:'emun'});",
+    ]
+    popup_opened = False
+    for script in login_attempts:
+        try:
+            driver.execute_script(script)
+            popup_opened = True
+            break
+        except Exception:
+            continue
+    if not popup_opened:
         # Fallback: click any visible login/sign-in trigger in the navbar.
         try:
             trigger = driver.find_element(
