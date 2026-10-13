@@ -221,7 +221,7 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 p_price = fixed_price
 
             data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images]
-            if not entry_matches_keyword(keyword, *data, p_text):
+            if not entry_matches_keyword(keyword, *data):
                 log('Skipped (keyword not found): ', p_title)
                 continue
             csvWriter(data, key)
