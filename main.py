@@ -763,6 +763,12 @@ def duke_scrape_category(driver, category_url, key):
 CROSSROADS_BASE_URL = 'https://crossroadscandles.com'
 CROSSROADS_LOGIN_PATH = '/login.php'
 
+# Tracks whether this browser session has a confirmed CrossRoads login.
+# Product pages often lack a visible logout/account marker, so re-checking
+# the DOM on every product falsely reports "logged out" and triggers a
+# pointless round-trip to the login page before each product-price scrape.
+crossroads_session_logged_in = False
+
 
 def crossroads_is_logged_in(driver):
     try:
@@ -802,6 +808,8 @@ def crossroads_base_url(category_url=None):
 
 
 def crossroads_login(driver, base_url=None):
+    global crossroads_session_logged_in
+    crossroads_session_logged_in = False
     base_url = base_url or CROSSROADS_BASE_URL
     # crossroadscandles.com uses a dedicated login page; the legacy
     # wholesale.crossroadsfamily.com site used the navbar popup instead.
@@ -814,6 +822,7 @@ def crossroads_login(driver, base_url=None):
 
     if crossroads_is_logged_in(driver):
         print('CrossRoads session already logged in.')
+        crossroads_session_logged_in = True
         return driver
 
     if not crossroads_email or not crossroads_password:
@@ -949,6 +958,7 @@ def crossroads_login(driver, base_url=None):
 
     if crossroads_is_logged_in(driver):
         print('CrossRoads login successful.')
+        crossroads_session_logged_in = True
     else:
         page_url = (driver.current_url or '').lower()
         if 'login' in page_url or 'signin' in page_url or 'join' in page_url:
@@ -1864,7 +1874,11 @@ def crossroads_sort_images_by_file_size(driver, urls):
 
 
 def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, listing_price=''):
-    if allow_relogin and 'crossroads_is_logged_in' in globals():
+    # Skip the per-product DOM login check once this session has a confirmed
+    # login: product pages often lack logout/account markers, so the check
+    # false-negatives and needlessly re-runs the login flow for every product.
+    if (allow_relogin and not globals().get('crossroads_session_logged_in')
+            and 'crossroads_is_logged_in' in globals()):
         try:
             if not globals()['crossroads_is_logged_in'](driver):
                 print('CrossRoads session appears logged out; logging in before product-price scrape.')
