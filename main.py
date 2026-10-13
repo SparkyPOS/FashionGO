@@ -1,6 +1,7 @@
 import re
 import sys
 import urllib.request
+from time import time
 from utils import *
 from urllib.parse import urlparse
 
@@ -9,6 +10,11 @@ SCRAPE_VERBOSE = os.getenv('SCRAPE_VERBOSE', '').strip().lower() in {'1', 'true'
 def log(*args, **kwargs):
     if SCRAPE_VERBOSE:
         print(*args, **kwargs)
+
+
+def info(*args, **kwargs):
+    """Always print; used for progress and diagnostics the user must see."""
+    print(*args, **kwargs)
 
 
 DETAIL_SKIP_TERMS = ('pre packed', 'prepacked', 'pcs', 'prepackaged pcs')
@@ -171,9 +177,10 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 log('Skipped (keyword not found): ', p_title)
                 continue
             csvWriter(data, key)
-            
+            info(f'Saved: {p_title or url}')
+
         except Exception as e:
-            pass 
+            info(f'Failed to scrape {url}: {e}')
 
 def fashiongo_scroll_to_load(driver, max_scrolls=20, pause=1.5):
     """Scroll down the page to trigger lazy-loaded product tiles."""
@@ -277,6 +284,24 @@ FASHIONGO_COLLECT_LINKS_JS = """
 """
 
 
+def fashiongo_links_from_page_source(driver):
+    """Fallback: regex-scan the rendered HTML for /Item/<id> product IDs."""
+    try:
+        html = driver.execute_script(
+            'return document.documentElement ? document.documentElement.outerHTML : "";') or ''
+    except Exception:
+        return []
+    links = []
+    seen = set()
+    for match in re.finditer(r'/(?:[A-Za-z0-9_-]+/)?[Ii]tem/(\d+)', html):
+        item_id = match.group(1)
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        links.append(f'https://www.fashiongo.net/Item/{item_id}')
+    return links
+
+
 def fashiongo_collect_product_links(driver):
     """Collect every product link visible on the current FashionGO page."""
     fashiongo_scroll_to_load(driver)
@@ -306,6 +331,10 @@ def fashiongo_collect_product_links(driver):
                 driver.switch_to.default_content()
             except Exception:
                 pass
+    if not links:
+        # Last resort: tiles may not use anchors at all (SPA click handlers);
+        # pull item IDs straight out of the rendered markup.
+        links = fashiongo_links_from_page_source(driver)
     return links
 
 
@@ -343,25 +372,42 @@ FASHIONGO_NEXT_BUTTON_JS = """return (function () {
 })()"""
 
 
+def fashiongo_wait_for_links(driver, timeout=60):
+    """Poll for product links, re-clicking the All Items tab while waiting."""
+    deadline = time() + timeout
+    links = fashiongo_collect_product_links(driver)
+    while not links and time() < deadline:
+        info('No items yet; waiting for the item grid to load...')
+        sleep(5)
+        fashiongo_click_all_items(driver)
+        links = fashiongo_collect_product_links(driver)
+    return links
+
+
 def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keyword=None):
     """Scrape every product on a FashionGO listing URL, following pagination."""
+    info(f'Opening {url}')
     driver.get(url)
     sleep(10)
     fashiongo_click_all_items(driver)
     seen_urls = set()
+    page_number = 1
+    total_scraped = 0
     while True:
         product_url_list = []
         try:
-            links = fashiongo_collect_product_links(driver)
-            # The storefront grid can load slowly; retry a few times before
-            # concluding the page really has no items.
-            attempts = 0
-            while not links and attempts < 3:
-                attempts += 1
-                sleep(5)
-                fashiongo_click_all_items(driver)
-                links = fashiongo_collect_product_links(driver)
-            log('Total Items: ', len(links))
+            links = fashiongo_wait_for_links(driver)
+            info(f'Page {page_number}: found {len(links)} item link(s).')
+            if not links:
+                try:
+                    current = driver.current_url or ''
+                    title = driver.title or ''
+                except Exception:
+                    current, title = '', ''
+                info(f'No product links found. Current URL: {current} | Page title: {title}')
+                if not fashiongo_is_logged_in(driver):
+                    info('It looks like the session is NOT logged in to FashionGO. '
+                         'Run Login.bat (or loginscript.py) to refresh cookies.pkl and try again.')
             for item_url in links:
                 if item_url in seen_urls:
                     continue
@@ -369,21 +415,26 @@ def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keywo
                 log(item_url)
                 product_url_list.append(item_url)
         except Exception as e:
-            log(e)
+            info(f'Stopped collecting links: {e}')
             break
         if product_url_list:
+            info(f'Scraping {len(product_url_list)} new product(s)...')
             product_details_scrap(scrap_driver, product_url_list, key, fixed_price, keyword)
+            total_scraped += len(product_url_list)
         try:
             next = driver.execute_script(FASHIONGO_NEXT_BUTTON_JS)
             if next is None:
                 break
+            info('Moving to the next page...')
             driver.execute_script(clicker, next)
             sleep(6)
+            page_number += 1
             is_visible = driver.execute_script(FASHIONGO_NEXT_BUTTON_JS + ' !== null')
             if not is_visible:
                 break
         except:
             break
+    info(f'Finished: scraped {total_scraped} product(s) into the "{key}" CSV.')
 
 
 def login(driver):
