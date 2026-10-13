@@ -1738,10 +1738,19 @@ CROSSROADS_IMAGES_JS = r"""
     const BAD_URL = /placeholder|logo|sprite|spinner|loading|star|rating|review|banner|icon|badge|button|favicon|captcha|\.svg(\?|$)/;
     const BAD_CTX = /star|rating|review|banner|icon|badge|logo|avatar/;
     const BAD_ZONE = 'header, footer, nav, .navbar, [class*="related" i], [class*="recommend" i], ' +
-        '[class*="upsell" i], [class*="cross-sell" i], [class*="you-may" i], [class*="similar" i]';
+        '[class*="upsell" i], [class*="cross-sell" i], [class*="you-may" i], [class*="similar" i], ' +
+        '[class*="thumb" i], [id*="thumb" i], [class*="thumbnail" i], [id*="thumbnail" i], ' +
+        '[class*="mini" i], [class*="small-image" i], [class*="product-card" i], [class*="item-card" i], ' +
+        '[class*="tile" i]';
     const GALLERY = '[class*="product-image" i], [class*="product-gallery" i], [class*="product-media" i], ' +
-        '[class*="main-image" i], [class*="item-image" i], [class*="gallery" i], [class*="carousel" i], ' +
-        '[class*="pdp" i], [id*="gallery" i], [id*="product-image" i]';
+        '[class*="main-image" i], [class*="item-image" i], [class*="gallery" i], [class*="pdp" i], ' +
+        '[id*="gallery" i], [id*="product-image" i], [id*="product-gallery" i], [id*="main-image" i]';
+    const isMainProductGallery = (el) => {
+        if (!el) return false;
+        if (el.closest && el.closest(BAD_ZONE)) return false;
+        const root = el.closest ? el.closest(GALLERY) : null;
+        return !!root || !!(el.getAttribute && (el.getAttribute('data-gallery') || el.getAttribute('data-product-image')));
+    };
     const resolve = (src) => {
         if (!src) return null;
         try { return new URL(src, document.baseURI).href; } catch (e) { return null; }
@@ -1782,20 +1791,26 @@ CROSSROADS_IMAGES_JS = r"""
         const cls = (img.className || '').toString().toLowerCase();
         if (BAD_CTX.test(alt + ' ' + cls)) return;
         if (inZone(img, BAD_ZONE)) return;
+        const insideGallery = inZone(img, GALLERY) || isMainProductGallery(img);
         const nw = img.naturalWidth || 0, nh = img.naturalHeight || 0;
         let area = nw * nh;
         if (!area) {
             const r = img.getBoundingClientRect();
             area = (r.width || 0) * (r.height || 0);
         }
-        const preferred = !!highRes || inZone(img, GALLERY) || area >= 200 * 200;
+        // Prefer the main product gallery and drop tiny thumbnail/review images
+        // that are only visible in a carousel or listing grid.
+        const preferred = !!highRes || insideGallery || area >= 200 * 200;
+        if (!insideGallery && area && area < 80 * 80) return;
         pushUrl(src, area, preferred && !(area && area < 80 * 80));
     };
     const collectAnchor = (a) => {
         const href = resolve(a.getAttribute('href') || '');
         if (!href || !/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(href)) return;
         if (inZone(a, BAD_ZONE)) return;
-        pushUrl(href, 0, inZone(a, GALLERY));
+        const insideGallery = inZone(a, GALLERY) || isMainProductGallery(a);
+        if (!insideGallery && href.toLowerCase().includes('thumbnail')) return;
+        pushUrl(href, 0, insideGallery);
     };
     const collectBackground = (el) => {
         if (!inZone(el, GALLERY) || inZone(el, BAD_ZONE)) return;
@@ -1821,7 +1836,15 @@ CROSSROADS_IMAGES_JS = r"""
     }
     const picked = strict.length ? strict : relaxed;
     picked.sort((a, b) => b.area - a.area);
-    return picked.slice(0, 20).map(item => item.src);
+    const deduped = [];
+    const seenUrls = new Set();
+    for (const item of picked) {
+        const url = (item && item.src) || '';
+        if (!url || seenUrls.has(url)) continue;
+        seenUrls.add(url);
+        deduped.push(url);
+    }
+    return deduped.slice(0, 12).map(item => item);
 """
 
 
