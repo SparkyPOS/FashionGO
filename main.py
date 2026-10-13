@@ -175,21 +175,87 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
         except Exception as e:
             pass 
 
+def fashiongo_scroll_to_load(driver, max_scrolls=20, pause=1.5):
+    """Scroll down the page to trigger lazy-loaded product tiles."""
+    last_height = 0
+    for _ in range(max_scrolls):
+        try:
+            driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
+        except Exception:
+            break
+        sleep(pause)
+        try:
+            height = driver.execute_script('return document.body.scrollHeight') or 0
+        except Exception:
+            break
+        if height == last_height:
+            break
+        last_height = height
+
+
 def fashiongo_collect_product_links(driver):
     """Collect every product link visible on the current FashionGO page."""
+    fashiongo_scroll_to_load(driver)
     links = driver.execute_script("""
         const urls = [];
         const seen = new Set();
-        document.querySelectorAll('a[href*="/Item/"]').forEach(a => {
-            let href = a.href || '';
+        const push = href => {
             if (!href) return;
             if (seen.has(href)) return;
             seen.add(href);
             urls.push(href);
+        };
+        // Match product detail links regardless of casing or vendor-prefixed
+        // paths, e.g. /Item/123, /item/123, /ggossip/Item/123, /display/item/123.
+        const itemLike = /\\/item\\/\\d+/i;
+        document.querySelectorAll('a[href]').forEach(a => {
+            const href = a.href || '';
+            if (itemLike.test(href)) push(href);
+        });
+        // Fallback: product tiles that store the item link in a data attribute.
+        document.querySelectorAll('[data-url], [data-href], [data-link]').forEach(el => {
+            const raw = el.getAttribute('data-url') || el.getAttribute('data-href') || el.getAttribute('data-link') || '';
+            if (itemLike.test(raw)) {
+                try { push(new URL(raw, document.baseURI).href); } catch (e) {}
+            }
         });
         return urls;
     """) or []
     return links
+
+
+FASHIONGO_NEXT_BUTTON_JS = """return (function () {
+    const selectors = [
+        'li.btn_next_paging',
+        '.paging-next',
+        'a[rel="next"]',
+        'a.next',
+        'button.next',
+        '[class*="pagination"] a[aria-label*="next" i]',
+        '[class*="paging"] [class*="next"]'
+    ];
+    const isVisible = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            style.opacity !== '0' &&
+            el.offsetWidth > 0 &&
+            el.offsetHeight > 0;
+    };
+    const isDisabled = el => {
+        if (el.disabled) return true;
+        const cls = (el.className || '').toString();
+        return /\\bdisabled\\b|\\binactive\\b/i.test(cls) ||
+            el.getAttribute('aria-disabled') === 'true';
+    };
+    for (const sel of selectors) {
+        for (const el of document.querySelectorAll(sel)) {
+            if (isVisible(el) && !isDisabled(el)) return el;
+        }
+    }
+    return null;
+})()"""
 
 
 def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keyword=None):
@@ -214,30 +280,13 @@ def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keywo
         if product_url_list:
             product_details_scrap(scrap_driver, product_url_list, key, fixed_price, keyword)
         try:
-            next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
+            next = driver.execute_script(FASHIONGO_NEXT_BUTTON_JS)
             if next is None:
                 break
             driver.execute_script(clicker, next)
             sleep(6)
-            is_visible = driver.execute_script("""
-            return (function () {
-            const el = document.querySelector(
-                'li.btn_next_paging.paging-button.paging-next'
-            );
-
-            if (!el) return false;
-
-            const style = window.getComputedStyle(el);
-            return (
-                style.display !== 'none' &&
-                style.visibility !== 'hidden' &&
-                style.opacity !== '0' &&
-                el.offsetWidth > 0 &&
-                el.offsetHeight > 0
-            );
-            })();
-            """)
-            if is_visible is False:
+            is_visible = driver.execute_script(FASHIONGO_NEXT_BUTTON_JS + ' !== null')
+            if not is_visible:
                 break
         except:
             break
