@@ -1182,7 +1182,8 @@ def crossroads_extract_price(driver):
         return best
 
     # Option 5 pages sometimes expose the canonical price in a snippet field.
-    # Use that exact value first, but keep the existing price sweep as a fallback.
+    # Collect these values but do not trust the first one blindly: stale tier
+    # values like "Case price $5.20" can appear before the real product price.
     try:
         texts = driver.execute_script(CROSSROADS_PRICE_SWEEP_JS) or []
     except Exception:
@@ -1200,10 +1201,11 @@ def crossroads_extract_price(driver):
             continue
         normalized.extend(line.strip() for line in text.splitlines() if line.strip())
     texts = normalized
+    snippet_values = []
     for text in texts:
         snippet = extract_snippet_value(text)
         if snippet:
-            return snippet
+            snippet_values.append(snippet)
 
     # Sweep every element whose class/id mentions "price", including shadow DOM
     # and same-origin iframes (the emun shop renders price via JS components).
@@ -1212,8 +1214,9 @@ def crossroads_extract_price(driver):
         if re.search(r'log\s*in|sign\s*in|login', text, re.I):
             continue
         candidates.extend(price_matches(text, price_pattern))
-    if candidates:
-        return highest_price(candidates)
+    all_candidates = snippet_values + candidates
+    if all_candidates:
+        return highest_price(all_candidates)
     for text in texts:
         if re.search(r'log\s*in|sign\s*in|login', text, re.I):
             continue
@@ -1370,11 +1373,23 @@ CROSSROADS_MAIN_PRICE_JS = r"""
     // quantity-break area, so soft matches are demoted rather than dropped.
     const HARD_BAD_CONTEXT = /retail|msrp|srp|compare|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
     const SOFT_BAD_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
+    const isProductTitle = (el) => {
+        if (!el) return false;
+        const text = (el.textContent || '').trim();
+        if (!text || text.length > 120) return false;
+        if (el.closest('header, nav, .header, .nav, [role="banner"]')) return false;
+        const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
+            (el.closest('[class]') ? el.closest('[class]').className.toString() : '')).toLowerCase();
+        if (el.tagName === 'H1' && !/(?:product|item|details|pdp|sku|name)/.test(context)) return false;
+        return true;
+    };
     let title = null;
-    for (const sel of ['h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1']) {
-        title = document.querySelector(sel);
-        if (title && (title.textContent || '').trim()) break;
-        title = null;
+    for (const sel of ['[itemprop="name"]', 'h1.product-title', '.product-title', '.product-name', 'h1.item-name', '.item-title', 'h1']) {
+        const candidate = document.querySelector(sel);
+        if (candidate && isProductTitle(candidate)) {
+            title = candidate;
+            break;
+        }
     }
     if (!title) return '';
     const titleRect = title.getBoundingClientRect();
@@ -1790,20 +1805,61 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
             sku = match.group(1).strip()
 
     price = (listing_price or '').strip()
+    def normalize_price(value):
+        if 'crossroads_normalize_price' in globals():
+            return globals()['crossroads_normalize_price'](value)
+        return re.sub(r'\s+', '', (value or '')).strip()
+
+    def tier_prices_from_text(text):
+        values = set()
+        if not text:
+            return values
+        tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+        for line in str(text).splitlines():
+            line = line.strip()
+            if not line or not re.search(tier_context, line, re.I):
+                continue
+            for match in re.finditer(r'[$€£]\s*\d[\d,]*(?:\.\d+)?', line):
+                values.add(normalize_price(match.group(0)))
+        return values
+
+    def get_tier_prices():
+        values = set()
+        if 'crossroads_tier_prices' in globals():
+            try:
+                values |= set(globals()['crossroads_tier_prices'](driver))
+            except Exception:
+                pass
+        if not values and 'CROSSROADS_TIER_PRICES_JS' in globals():
+            try:
+                values |= {normalize_price(p) for p in (driver.execute_script(CROSSROADS_TIER_PRICES_JS) or []) if p}
+            except Exception:
+                pass
+        if not values:
+            values |= tier_prices_from_text(body_text)
+        return values
+
     # The category listing tile shows the shopper-facing price for this exact
     # product; when we captured it there, it is authoritative.
     # The SKU/body-text regex is intentionally not used as a normal fallback:
     # it can grab stale tier/qty values like $5.20 before the actual product
     # price. Prefer the title-scoped visible price and the generic DOM sweep.
+    tier_prices = get_tier_prices()
+    if price and normalize_price(price) in tier_prices:
+        print(f'Listing price {price} matches a tier/qty fallback value; ignoring it.')
+        price = ''
     try:
         main_price = (driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or '').strip()
     except Exception:
         main_price = ''
-    if price and main_price and crossroads_normalize_price(price) != crossroads_normalize_price(main_price):
+    if main_price and normalize_price(main_price) in tier_prices:
+        print(f'Main price {main_price} matches a tier/qty fallback value; ignoring it and falling back to a visible product price.')
+        main_price = ''
+    if price and main_price and normalize_price(price) != normalize_price(main_price):
         # A listing price that reappears on the product page only in a
         # tier/qty context is a stale tier fallback value, not the shopper
         # price; trust the displayed main price instead.
-        if crossroads_normalize_price(price) in crossroads_tier_prices(driver):
+        if normalize_price(price) in tier_prices:
             print(f'Listing price {price} matches a tier value on the product page; using displayed price {main_price}.')
             price = main_price
     if not price:
