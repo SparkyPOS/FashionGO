@@ -19,6 +19,10 @@ names = {
     'crossroads_extract_product_metadata',
     'crossroads_image_file_size',
     'crossroads_sort_images_by_file_size',
+    'crossroads_scrape_quick_view',
+    'crossroads_close_quick_view',
+    'crossroads_quick_view_count',
+    'crossroads_upgrade_image_url',
 }
 tree = ast.parse(source.read_text())
 functions = ast.Module(
@@ -32,6 +36,11 @@ namespace = {
     'sleep': Mock(),
     'CROSSROADS_PRICE_SWEEP_JS': 'return []',
     'CROSSROADS_IMAGES_JS': 'return []',
+    'CROSSROADS_QUICK_VIEW_COUNT_JS': 'QV_COUNT',
+    'CROSSROADS_QUICK_VIEW_OPEN_JS': 'QV_OPEN',
+    'CROSSROADS_QUICK_VIEW_DATA_JS': 'QV_DATA',
+    'CROSSROADS_QUICK_VIEW_CLOSE_JS': 'QV_CLOSE',
+    'CROSSROADS_QUICK_VIEW_VISIBLE_JS': 'QV_VISIBLE',
 }
 exec(compile(functions, str(source), 'exec'), namespace)
 price_after_sku = namespace['crossroads_price_after_sku']
@@ -202,6 +211,65 @@ class CrossroadsPriceTests(unittest.TestCase):
         self.assertEqual(metadata['MINIMUM QTY'], '12')
         self.assertEqual(metadata['DIMENSIONS'], '8 x 8')
         self.assertEqual(metadata['DESIGNER'], 'River')
+
+
+class CrossroadsQuickViewTests(unittest.TestCase):
+    def _driver(self, data, open_result=None):
+        driver = Mock()
+        def execute_script(script, *args):
+            if script == 'QV_OPEN':
+                return {'ok': True, 'productId': '101'} if open_result is None else open_result
+            if script == 'QV_DATA':
+                return data
+            if script == 'QV_VISIBLE':
+                return False
+            if script == 'QV_CLOSE':
+                return True
+            return None
+        driver.execute_script.side_effect = execute_script
+        driver.get_cookies.return_value = []
+        return driver
+
+    def test_upgrade_image_url_swaps_stencil_size_for_original(self):
+        self.assertEqual(
+            namespace['crossroads_upgrade_image_url'](
+                'https://cdn11.bigcommerce.com/s-abc/images/stencil/500x659/products/101/900/jar.jpg'),
+            'https://cdn11.bigcommerce.com/s-abc/images/stencil/original/products/101/900/jar.jpg',
+        )
+        self.assertEqual(
+            namespace['crossroads_upgrade_image_url']('https://example.com/img/jar.jpg'),
+            'https://example.com/img/jar.jpg',
+        )
+
+    def test_scrapes_quick_view_modal_fields(self):
+        driver = self._driver({
+            'title': 'Buttered Maple Syrup 26 oz Jar',
+            'sku': 'BMS-26',
+            'price': '$12.50',
+            'description': 'Our famous  buttered maple\nsyrup candle.',
+            'url': 'https://crossroadscandles.com/buttered-maple-syrup-26-oz-jar/',
+            'images': ['https://cdn11.bigcommerce.com/s-abc/images/stencil/500x659/products/101/900/jar.jpg'],
+        })
+        row, dedup_key = namespace['crossroads_scrape_quick_view'](driver, 0)
+        self.assertEqual(dedup_key, '101')
+        self.assertEqual(row[0], 'Buttered Maple Syrup 26 oz Jar')
+        self.assertEqual(row[1], 'BMS-26')
+        self.assertEqual(row[2], '$12.50')
+        self.assertEqual(row[5], 'Our famous buttered maple syrup candle.')
+        self.assertEqual(row[7], 'https://cdn11.bigcommerce.com/s-abc/images/stencil/original/products/101/900/jar.jpg')
+
+    def test_quick_view_without_data_returns_none(self):
+        row, dedup_key = namespace['crossroads_scrape_quick_view'](self._driver(None), 0)
+        self.assertIsNone(row)
+        self.assertEqual(dedup_key, '')
+
+    def test_quick_view_dedup_key_falls_back_to_url_then_title_sku(self):
+        data = {'title': 'Jar', 'sku': 'BMS', 'price': '$5', 'description': '', 'url': 'https://x.com/p/', 'images': []}
+        _, dedup_key = namespace['crossroads_scrape_quick_view'](self._driver(data, open_result={'ok': True, 'productId': ''}), 0)
+        self.assertEqual(dedup_key, 'https://x.com/p/')
+        data['url'] = ''
+        _, dedup_key = namespace['crossroads_scrape_quick_view'](self._driver(data, open_result={'ok': True, 'productId': ''}), 0)
+        self.assertEqual(dedup_key, 'Jar|BMS')
 
 
 if __name__ == '__main__':

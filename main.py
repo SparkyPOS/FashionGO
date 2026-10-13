@@ -2076,6 +2076,248 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     return [title, sku, price, '', '', description_text, '', ', '.join(images)]
 
 
+# crossroadscandles.com (BigCommerce) category tiles expose a "Quick view"
+# button that opens a modal with the full product details. Product page links
+# on that theme do not match the legacy /product//itemid= URL patterns, so the
+# quick-view modal is the reliable source for title/description/sku/price/images.
+CROSSROADS_QUICK_VIEW_FIND_JS = r"""
+    const findQuickViewButtons = () => {
+        const seen = new Set();
+        const out = [];
+        const push = (el) => {
+            if (!el || seen.has(el)) return;
+            const tag = el.tagName ? el.tagName.toLowerCase() : '';
+            if (tag !== 'a' && tag !== 'button' && !el.hasAttribute('data-event-type')
+                && !el.hasAttribute('data-quick-view') && !el.hasAttribute('data-quickview')) return;
+            try { if (el.closest('.modal, [role="dialog"], #previewModal')) return; } catch (e) {}
+            seen.add(el);
+            out.push(el);
+        };
+        const selectors = '[data-event-type="quick-view"], [data-quick-view], .quickview, ' +
+            '[class*="quickview" i], [class*="quick-view" i], [data-quickview]';
+        for (const el of document.querySelectorAll(selectors)) push(el);
+        if (!out.length) {
+            for (const el of document.querySelectorAll('a, button')) {
+                if (/^\s*quick\s*view\s*$/i.test(el.innerText || el.textContent || '')) push(el);
+            }
+        }
+        return out;
+    };
+"""
+
+CROSSROADS_QUICK_VIEW_COUNT_JS = CROSSROADS_QUICK_VIEW_FIND_JS + r"""
+    return findQuickViewButtons().length;
+"""
+
+CROSSROADS_QUICK_VIEW_OPEN_JS = CROSSROADS_QUICK_VIEW_FIND_JS + r"""
+    const buttons = findQuickViewButtons();
+    const button = buttons[arguments[0]];
+    if (!button) return null;
+    let productId = button.getAttribute('data-product-id') || '';
+    if (!productId) {
+        const holder = button.closest('[data-product-id], [data-entity-id]');
+        if (holder) productId = holder.getAttribute('data-product-id') || holder.getAttribute('data-entity-id') || '';
+    }
+    try { button.scrollIntoView({block: 'center'}); } catch (e) {}
+    button.click();
+    return { ok: true, productId: productId };
+"""
+
+CROSSROADS_QUICK_VIEW_MODAL_JS = r"""
+    const findQuickViewModal = () => {
+        const selectors = ['#previewModal', '.modal.quickview', '.quickView',
+            '[id*="quickview" i]', '[class*="quick-view" i]', '[class*="quickview" i]',
+            '.modal[class*="open" i], .modal.open, .modal.show, [role="dialog"]'];
+        for (const selector of selectors) {
+            let nodes = [];
+            try { nodes = document.querySelectorAll(selector); } catch (e) { continue; }
+            for (const el of nodes) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) return el;
+            }
+        }
+        return null;
+    };
+"""
+
+CROSSROADS_QUICK_VIEW_DATA_JS = CROSSROADS_QUICK_VIEW_MODAL_JS + r"""
+    const modal = findQuickViewModal();
+    if (!modal) return null;
+    const CURRENCY = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
+    const textOf = (el) => ((el && (el.innerText || el.textContent)) || '').trim();
+    const firstText = (selectors) => {
+        for (const selector of selectors) {
+            const el = modal.querySelector(selector);
+            const text = textOf(el);
+            if (text) return text;
+        }
+        return '';
+    };
+    const title = firstText(['.productView-title', 'h1.productView-title', '[class*="product" i][class*="title" i]',
+        '.product-title', '.quickView-title', 'h1', 'h2', 'h3']);
+    let sku = firstText(['[data-product-sku]', '.productView-info-value--sku', '[itemprop="sku"]',
+        '.product-sku', '.sku']);
+    if (!sku) {
+        const match = (modal.innerText || '').match(/(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*([A-Za-z0-9\-]+)/i);
+        if (match) sku = match[1];
+    }
+    let price = '';
+    const PRICE_SELECTORS = ['.price--withoutTax', '[data-product-price-without-tax]', '.price--withTax',
+        '[data-product-price-with-tax]', '.productView-price .price', '.productView-price', '.price'];
+    for (const selector of PRICE_SELECTORS) {
+        const el = modal.querySelector(selector);
+        if (!el) continue;
+        const match = textOf(el).match(CURRENCY);
+        if (match) { price = match[0].replace(/\s+/g, ''); break; }
+    }
+    if (!price) {
+        for (const line of (modal.innerText || '').split('\n')) {
+            if (/retail|msrp|srp|compare|was\b|save/i.test(line)) continue;
+            const match = line.match(CURRENCY);
+            if (match) { price = match[0].replace(/\s+/g, ''); break; }
+        }
+    }
+    const description = firstText(['.productView-description', '[itemprop="description"]',
+        '.product-description', '.quickView-description', '.description']);
+    let url = '';
+    for (const anchor of modal.querySelectorAll('a[href]')) {
+        const href = anchor.href || '';
+        if (!href || href.startsWith('javascript:')) continue;
+        const lower = href.toLowerCase();
+        if (lower.includes('/cart') || lower.includes('/compare') || lower.includes('/login')
+            || /\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(lower)) continue;
+        url = href.split('#')[0];
+        break;
+    }
+    const seen = new Set();
+    const images = [];
+    const resolve = (src) => {
+        if (!src || src.startsWith('data:') || src.startsWith('javascript:')) return null;
+        try { return new URL(src, document.baseURI).href; } catch (e) { return null; }
+    };
+    const BAD_IMAGE = /placeholder|logo|sprite|spinner|loading|star|rating|review|icon|badge|favicon|\.svg(\?|$)/i;
+    const largestFromSrcset = (el) => {
+        const srcset = el.getAttribute('data-srcset') || el.getAttribute('srcset');
+        if (!srcset) return null;
+        let best = null, bestW = 0;
+        for (const part of srcset.split(',')) {
+            const bits = part.trim().split(/\s+/);
+            if (!bits[0]) continue;
+            const w = bits[1] && /^\d+w$/.test(bits[1]) ? parseInt(bits[1]) : 0;
+            if (w >= bestW) { bestW = w; best = bits[0]; }
+        }
+        return best;
+    };
+    const pushImage = (src) => {
+        if (!src || BAD_IMAGE.test(src) || seen.has(src)) return;
+        seen.add(src);
+        images.push(src);
+    };
+    for (const img of modal.querySelectorAll('img')) {
+        const highRes = img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || largestFromSrcset(img);
+        pushImage(resolve(highRes || img.getAttribute('data-src') || img.currentSrc || img.getAttribute('src')));
+    }
+    for (const anchor of modal.querySelectorAll('a[href]')) {
+        const href = resolve(anchor.getAttribute('href'));
+        if (href && /\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(href)) pushImage(href);
+    }
+    return { title: title, sku: sku, price: price, description: description, url: url, images: images.slice(0, 12) };
+"""
+
+CROSSROADS_QUICK_VIEW_CLOSE_JS = CROSSROADS_QUICK_VIEW_MODAL_JS + r"""
+    const modal = findQuickViewModal();
+    if (!modal) return true;
+    for (const selector of ['.modal-close', '[data-dismiss="modal"]', 'button.close', '.close', '[aria-label="Close" i]']) {
+        const button = modal.querySelector(selector);
+        if (button) { button.click(); return true; }
+    }
+    return false;
+"""
+
+CROSSROADS_QUICK_VIEW_VISIBLE_JS = CROSSROADS_QUICK_VIEW_MODAL_JS + r"""
+    return !!findQuickViewModal();
+"""
+
+
+def crossroads_quick_view_count(driver):
+    try:
+        return int(driver.execute_script(CROSSROADS_QUICK_VIEW_COUNT_JS) or 0)
+    except Exception:
+        return 0
+
+
+def crossroads_close_quick_view(driver):
+    for _ in range(10):
+        try:
+            driver.execute_script(CROSSROADS_QUICK_VIEW_CLOSE_JS)
+        except Exception:
+            pass
+        sleep(0.5)
+        try:
+            if not driver.execute_script(CROSSROADS_QUICK_VIEW_VISIBLE_JS):
+                return True
+        except Exception:
+            return True
+        try:
+            from selenium.webdriver.common.keys import Keys
+            driver.find_element(By.CSS_SELECTOR, 'body').send_keys(Keys.ESCAPE)
+        except Exception:
+            pass
+    return False
+
+
+def crossroads_upgrade_image_url(url):
+    # BigCommerce stencil CDN serves resized copies under /stencil/{W}x{H}/;
+    # swapping in /stencil/original/ returns the full-size upload.
+    return re.sub(r'/stencil/\d+x\d+/', '/stencil/original/', url or '')
+
+
+def crossroads_scrape_quick_view(driver, index):
+    """Open the index-th Quick View modal on the current category page and
+    return (row, dedup_key); row is None when the modal yields no product data."""
+    try:
+        opened = driver.execute_script(CROSSROADS_QUICK_VIEW_OPEN_JS, index)
+    except Exception as exc:
+        print(f'Could not open quick view #{index + 1}: {exc}')
+        return None, ''
+    if not opened:
+        return None, ''
+
+    data = None
+    for _ in range(20):
+        sleep(0.5)
+        try:
+            data = driver.execute_script(CROSSROADS_QUICK_VIEW_DATA_JS)
+        except Exception:
+            data = None
+        if data and (data.get('title') or data.get('sku')):
+            break
+    if data and (data.get('title') or data.get('sku')) and not data.get('images'):
+        # The modal text often arrives before the AJAX-loaded gallery; give the
+        # images one more chance to render.
+        sleep(1.5)
+        try:
+            data = driver.execute_script(CROSSROADS_QUICK_VIEW_DATA_JS) or data
+        except Exception:
+            pass
+
+    crossroads_close_quick_view(driver)
+
+    if not data:
+        return None, ''
+    title = (data.get('title') or '').strip()
+    sku = (data.get('sku') or '').strip()
+    price = (data.get('price') or '').strip()
+    description = re.sub(r'\s+', ' ', data.get('description') or '').strip()
+    images = [crossroads_upgrade_image_url(u) for u in (data.get('images') or []) if u]
+    images = crossroads_sort_images_by_file_size(driver, images)
+    dedup_key = (opened.get('productId') if isinstance(opened, dict) else '') or (data.get('url') or '').strip() or f'{title}|{sku}'
+
+    if not title and not sku and not price and not description:
+        return None, dedup_key
+    return [title, sku, price, '', '', description, '', ', '.join(images)], dedup_key
+
+
 def crossroads_set_page(url, page_number):
     if re.search(r'([?&])page=\d+', url):
         return re.sub(r'([?&])page=\d+', r'\g<1>page=' + str(page_number), url)
@@ -2108,6 +2350,35 @@ def crossroads_scrape_category(driver, category_url, key):
             print(f'Opening category page: {page_url}')
             driver.get(page_url)
             sleep(5)
+
+            # crossroadscandles.com renders product details in Quick View
+            # modals; scrape those directly when the page offers them.
+            quick_view_total = crossroads_quick_view_count(driver)
+            if quick_view_total:
+                print(f'Page {page_number}: found {quick_view_total} quick view button(s).')
+                new_products = 0
+                for index in range(quick_view_total):
+                    print(f'Scraping quick view {index + 1}/{quick_view_total} on page {page_number}')
+                    try:
+                        row, dedup_key = crossroads_scrape_quick_view(driver, index)
+                    except Exception as exc:
+                        print(f'Failed to scrape quick view #{index + 1}: {exc}')
+                        continue
+                    if dedup_key and dedup_key in seen_products:
+                        continue
+                    if dedup_key:
+                        seen_products.add(dedup_key)
+                    if row:
+                        new_products += 1
+                        print(f'CrossRoads quick view scraped: {row[0] or row[1] or "<unnamed>"} (price: {row[2] or "<empty>"})')
+                        csvWriter(row, key)
+                    else:
+                        print('Skipped (no product data found in quick view).')
+                if new_products == 0:
+                    print('No new products found on this page; stopping.')
+                    break
+                page_number += 1
+                continue
 
             product_links = crossroads_get_product_links(driver, allowed_host)
             listing_prices = crossroads_get_listing_prices(driver)
