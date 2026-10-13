@@ -1,4 +1,5 @@
 import re
+import sys
 import urllib.request
 from utils import *
 from urllib.parse import urlparse
@@ -2276,12 +2277,23 @@ if __name__ == '__main__':
     driver.maximize_window()
     driver.implicitly_wait(10)
     scrap_driver.implicitly_wait(5)
-    number = int(input("""
+    menu = """
     1. -> Scrap by Category
     2. -> Scrap by Catalog
     3. -> Scrap by vendor link
     4. -> Scrap Duke Imports category URL
     5. -> Scrap CrossRoads category URL
-    """))
+    """
+    number = None
+    while number is None:
+        try:
+            choice = input(menu).strip()
+        except EOFError:
+            print('No menu selection received; exiting.')
+            sys.exit(1)
+        if choice.isdigit() and 1 <= int(choice) <= 5:
+            number = int(choice)
+        else:
+            print(f'Invalid selection {choice!r}. Please enter a number from 1 to 5.')
     main(driver, number, scrap_driver)
     # product_details_scrap(driver, ['https://www.fashiongo.net/Item/21638783?paKey=202405152c85431acbb0b1e8a2aaeeed7b29cb38&listkey=097a92c8-fcdf-4bb4-bbcc-cdf71b3ed01b'], 'test')
