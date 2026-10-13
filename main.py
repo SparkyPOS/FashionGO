@@ -935,7 +935,7 @@ CROSSROADS_LISTING_PRICES_JS = r"""
     const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/;
     // Tier/qty-break fallback lines (e.g. "As low as $5.20", "12+ $5.20")
     // show a bulk price, not the shopper-facing tile price.
-    const TIER_LINE = /as\s+low\s+as|starting\s+at|from\s*\$|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|\d+\s*\+/i;
+    const TIER_LINE = /as\s+low\s+as|starting\s+at|from\s*\$|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|\d+\s*\+/i;
     const tilePrice = (node) => {
         for (const line of ((node.innerText || '')).split('\n')) {
             const text = line.trim();
@@ -1007,7 +1007,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
     };
     // Tier/qty-break fallback values (e.g. a stale "$5.20" bulk price) must
     // never beat the displayed price; demote them to the fallback list.
-    const TIER_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
+    const TIER_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
     const inTier = (el, value) => {
         try {
             const context = ((el.className || '').toString() + ' ' + (el.id || '') + ' ' +
@@ -1076,7 +1076,7 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
 
 
 def crossroads_price_matches(text, price_pattern=r'[$€£]\s*\d[\d,]*(?:\.\d+)?'):
-    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
 
     def product_hint(fragment):
         if not fragment:
@@ -1132,7 +1132,7 @@ def crossroads_extract_price(driver):
 
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
-    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
 
     def product_hint(fragment):
         if not fragment:
@@ -1247,7 +1247,7 @@ def crossroads_extract_price(driver):
         return '$' + match.group(1).strip()
     return ''
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
-    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
 
     def product_hint(fragment):
         if not fragment:
@@ -1371,8 +1371,8 @@ CROSSROADS_MAIN_PRICE_JS = r"""
     // (tier/qty/case tables) usually aren't either, but emun pages sometimes
     // render the main displayed price (e.g. <strong>$6.25</strong>) inside the
     // quantity-break area, so soft matches are demoted rather than dropped.
-    const HARD_BAD_CONTEXT = /retail|msrp|srp|compare|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
-    const SOFT_BAD_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
+    const HARD_BAD_CONTEXT = /retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|strike|\bold\b|cart|checkout|shipping|total|subtotal|minimum|nav|footer|header/;
+    const SOFT_BAD_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|case|pack|dozen|bulk|qty|quantity|variant|size-option|swatch|per\s*(?:case|dozen)|\d+\s*\+/;
     const isProductTitle = (el) => {
         if (!el) return false;
         const text = (el.textContent || '').trim();
@@ -1475,7 +1475,7 @@ CROSSROADS_TIER_PRICES_JS = r"""
     // (including hidden templates). Used to detect when a captured listing
     // price is really a stale tier fallback value.
     const currency = /[$€£]\s*\d[\d,]*(?:\.\d+)?/g;
-    const TIER_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
+    const TIER_CONTEXT = /as\s+low\s+as|starting\s+at|from\s*\$|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+/i;
     const out = new Set();
     const visit = (root) => {
         for (const el of root.querySelectorAll('*')) {
@@ -1583,7 +1583,7 @@ def crossroads_price_after_sku(body_text, sku):
     sku = re.sub(r'^(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*', '', sku.strip(), flags=re.I)
     if not sku:
         return ''
-    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+    tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
     sku_pattern = re.escape(sku) + r'(?![\w-])'
     match = re.search(
         r'\b(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*' + sku_pattern,
@@ -1814,7 +1814,7 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
         values = set()
         if not text:
             return values
-        tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+        tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|retail|msrp|srp|compare|regular\s+price|list\s+price|original\s+price|\bwas\b|save|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
         for line in str(text).splitlines():
             line = line.strip()
             if not line or not re.search(tier_context, line, re.I):
