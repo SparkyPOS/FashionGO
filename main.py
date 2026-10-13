@@ -1676,6 +1676,23 @@ def crossroads_extract_product_metadata(body_text):
     return metadata
 
 
+def crossroads_scent_description(text):
+    """Return only the value following a "Scent Description:" label, if present.
+
+    The value ends at the next label-looking line (e.g. "ITEM #:", "Burn Time:"),
+    a blank line, or the end of the text."""
+    if not text:
+        return ''
+    match = re.search(
+        r'Scent\s+Description\s*[:\-]\s*(.+?)(?=\n[^\n:]{1,60}:|\n\s*\n|$)',
+        text.replace('\r\n', '\n').replace('\r', '\n'),
+        re.I | re.S,
+    )
+    if not match:
+        return ''
+    return re.sub(r'\s+', ' ', match.group(1)).strip(' :;,-')
+
+
 def crossroads_price_after_sku(body_text, sku):
     sku = re.sub(r'^(?:SKU|Item\s*(?:#|No\.?|Number))\s*[:#]?\s*', '', sku.strip(), flags=re.I)
     if not sku:
@@ -2021,7 +2038,22 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     print(f'CrossRoads selected price for {product_url}: {price or "<empty>"}')
 
     description = ''
+    # The description column must contain only the value following the
+    # "Scent Description:" label when the page provides one.
+    scent = crossroads_scent_description(body_text)
+    if not scent:
+        for selector in ['.product-description', '.description', '[itemprop="description"]', '.product-details-description', '.item-description']:
+            try:
+                scent = crossroads_scent_description(driver.find_element(By.CSS_SELECTOR, selector).text)
+                if scent:
+                    break
+            except Exception:
+                pass
+    if scent:
+        description = scent
     for selector in ['.product-description', '.description', '[itemprop="description"]', '.product-details-description', '.item-description']:
+        if description:
+            break
         try:
             description = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
             if description:
@@ -2062,6 +2094,9 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     description_text = ' | '.join(part for part in [description, details] if part)
     if metadata_block:
         description_text = ' | '.join(part for part in [description_text, metadata_block] if part)
+    if scent:
+        # Only the Scent Description value goes into the CSV description column.
+        description_text = scent
 
     images = []
     try:
@@ -2221,7 +2256,8 @@ CROSSROADS_QUICK_VIEW_DATA_JS = CROSSROADS_QUICK_VIEW_MODAL_JS + r"""
         const href = resolve(anchor.getAttribute('href'));
         if (href && /\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(href)) pushImage(href);
     }
-    return { title: title, sku: sku, price: price, description: description, url: url, images: images.slice(0, 12) };
+    return { title: title, sku: sku, price: price, description: description, url: url,
+        modalText: (modal.innerText || ''), images: images.slice(0, 12) };
 """
 
 CROSSROADS_QUICK_VIEW_CLOSE_JS = CROSSROADS_QUICK_VIEW_MODAL_JS + r"""
@@ -2309,6 +2345,10 @@ def crossroads_scrape_quick_view(driver, index):
     sku = (data.get('sku') or '').strip()
     price = (data.get('price') or '').strip()
     description = re.sub(r'\s+', ' ', data.get('description') or '').strip()
+    scent = (crossroads_scent_description(data.get('description') or '')
+             or crossroads_scent_description(data.get('modalText') or ''))
+    if scent:
+        description = scent
     images = [crossroads_upgrade_image_url(u) for u in (data.get('images') or []) if u]
     images = crossroads_sort_images_by_file_size(driver, images)
     dedup_key = (opened.get('productId') if isinstance(opened, dict) else '') or (data.get('url') or '').strip() or f'{title}|{sku}'
