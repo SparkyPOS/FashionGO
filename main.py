@@ -68,19 +68,47 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 si = driver.execute_script("""
                     const texts = [];
                     const seen = new Set();
+                    // Only keep tokens that look like actual sizes: short values
+                    // (letters like S/M/L/XL, numbers like 7 or 7.5, or single
+                    // words like Small), never labels, prices or sentences.
+                    const BAD = /^(?:EST\\.?\\s*SHIP|COLOR|QTY|TOTAL|SIZES?|PRICE|STYLE|PACK|SELECT.*)$/;
                     const push = (t) => {
                         t = (t || '').trim();
-                        if (!t) return;
+                        if (!t || t.length > 20) return;
                         const key = t.toUpperCase();
-                        if (key === 'EST. SHIP' || key === 'COLOR' || key === 'QTY' || key === 'TOTAL') return;
+                        if (BAD.test(key)) return;
+                        if (/[$:]/.test(t) || /\\b(?:QTY|TOTAL|SHIP|PRICE|COLOR)\\b/i.test(t)) return;
+                        if (!/^[A-Za-z0-9 .\\/+]+$/.test(t)) return;
                         if (seen.has(key)) return;
                         seen.add(key);
                         texts.push(t);
                     };
-                    // Primary: size headers in the order table
-                    document.querySelectorAll('thead span').forEach(span => {
-                        if (!span.hasAttribute('class') || span.classList.contains('small-text')) push(span.textContent);
-                    });
+                    const pushList = (t) => {
+                        (t || '').split(/\\s*[-,|\\/]\\s*|\\n/).forEach(push);
+                    };
+                    // Primary: the value next to a "Size" label,
+                    // e.g. <strong>Size</strong> S-M-L-XL
+                    for (const label of document.querySelectorAll('strong, b, th, dt, label, span')) {
+                        const lt = (label.textContent || '').trim().replace(/[:：]\\s*$/, '');
+                        if (!/^sizes?$/i.test(lt)) continue;
+                        let value = '';
+                        let node = label.nextSibling;
+                        while (node && !value) {
+                            value = ((node.textContent !== undefined ? node.textContent : node.nodeValue) || '').trim();
+                            node = node.nextSibling;
+                        }
+                        if (!value && label.parentElement) {
+                            value = (label.parentElement.textContent || '').replace(label.textContent || '', '').trim();
+                        }
+                        pushList(value);
+                        if (texts.length) break;
+                    }
+                    // Fallback: size headers in the order table
+                    if (!texts.length) {
+                        document.querySelectorAll('thead span').forEach(span => {
+                            if (!span.hasAttribute('class') || span.classList.contains('small-text')) push(span.textContent);
+                        });
+                    }
                     if (!texts.length) {
                         document.querySelectorAll('thead th, thead td').forEach(el => push(el.textContent));
                     }
