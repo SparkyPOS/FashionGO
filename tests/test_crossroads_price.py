@@ -108,10 +108,26 @@ class CrossroadsPriceTests(unittest.TestCase):
         ]
         self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
 
+    def test_ignores_stale_case_price_after_product_price_in_same_text_block(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            ['Product $6.25\nCase price $5.20'],
+            '<html><body>product</body></html>',
+        ]
+        self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
+
     def test_ignores_related_product_price_when_real_product_price_is_present(self):
         driver = Mock()
         driver.execute_script.side_effect = [
             ['Product $6.25', 'Related Products $5.20'],
+            '<html><body>product</body></html>',
+        ]
+        self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
+
+    def test_prefers_highest_visible_price_when_multiple_prices_are_present(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            ['Showcase $5.20', 'Product price $6.25', 'Case price $5.20'],
             '<html><body>product</body></html>',
         ]
         self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
