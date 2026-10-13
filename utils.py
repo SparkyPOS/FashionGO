@@ -86,7 +86,6 @@ def csvMaker(filename):
                 'Product Details',
                 'Febric Contents',
                 'Images',
-               'Text',
                ])
 
 
