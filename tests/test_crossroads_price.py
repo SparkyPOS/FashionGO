@@ -132,6 +132,14 @@ class CrossroadsPriceTests(unittest.TestCase):
         ]
         self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
 
+    def test_ignores_retail_msrp_and_compare_prices(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            ['MSRP $5.20', 'Was $5.50', 'Our Price $6.25'],
+            '<html><body>product</body></html>',
+        ]
+        self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
+
     def test_missing_price_does_not_use_earlier_price(self):
         driver = Mock()
         driver.find_element.side_effect = LookupError
