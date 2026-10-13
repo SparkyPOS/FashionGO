@@ -1111,6 +1111,54 @@ def crossroads_price_matches(text, price_pattern=r'[$€£]\s*\d[\d,]*(?:\.\d+)?
 
 
 def crossroads_extract_price(driver):
+    def extract_snippet_value(text):
+        if not isinstance(text, str):
+            text = str(text or '')
+        if not text:
+            return ''
+        patterns = [
+            r'(?i)["\'](?:wholesalePrice|unitPrice|listPrice|salePrice|basePrice|productPrice|itemPrice|priceValue|priceText|price|Price)["\']\s*:\s*["\']?\s*(\$?\s*\d[\d,]*(?:\.\d+)?)',
+            r'(?i)(?:wholesale|unit|list|sale|base|product|item)\s*price\s*[:=]\s*["\']?\s*(\$?\s*\d[\d,]*(?:\.\d+)?)',
+            r'(?i)\b(?:price|Price|unitPrice|wholesalePrice|listPrice|salePrice|basePrice|productPrice|itemPrice|priceValue|priceText)\b\s*[:=]\s*["\']?\s*(\$?\s*\d[\d,]*(?:\.\d+)?)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                value = match.group(1).strip()
+                if value.startswith('$'):
+                    return value
+                return '$' + value
+        return ''
+
+    try:
+        texts = driver.execute_script(CROSSROADS_PRICE_SWEEP_JS) or []
+    except Exception:
+        texts = []
+    if isinstance(texts, str):
+        texts = [texts]
+    elif not isinstance(texts, (list, tuple, set)):
+        texts = [texts]
+    normalized = []
+    for item in texts:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            normalized.extend(line.strip() for line in text.splitlines() if line.strip())
+    texts = normalized
+    for text in texts:
+        snippet = extract_snippet_value(text)
+        if snippet:
+            return snippet
+
+    try:
+        html = driver.execute_script('return document.documentElement.outerHTML') or ''
+    except Exception:
+        html = ''
+    snippet = extract_snippet_value(html)
+    if snippet:
+        return snippet
+
     price_pattern = r'[$€£]\s*\d[\d,]*(?:\.\d+)?'
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
     tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
