@@ -8,7 +8,26 @@ SCRAPE_VERBOSE = os.getenv('SCRAPE_VERBOSE', '').strip().lower() in {'1', 'true'
 
 def log(*args, **kwargs):
     if SCRAPE_VERBOSE:
-        log(*args, **kwargs)
+        print(*args, **kwargs)
+
+
+DETAIL_SKIP_TERMS = ('pre packed', 'prepacked', 'pcs', 'prepackaged pcs')
+
+
+def fashiongo_filter_details(text):
+    """Keep detail lines, skipping any line mentioning pre-pack/pcs info."""
+    if not text:
+        return ''
+    kept = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if any(term in lowered for term in DETAIL_SKIP_TERMS):
+            continue
+        kept.append(line)
+    return '\n'.join(kept)
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -41,28 +60,76 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
             p_size = ''
             try:
                 si = driver.execute_script("""
-                    const allSpans = Array.from(document.querySelectorAll("thead span"));
-                    const spansWithoutClass = allSpans.filter(span => !span.hasAttribute("class") || span.classList.contains("small-text"));
-                    const textArray = [];
-                    spansWithoutClass.forEach(span => {
-                        textArray.push(span.textContent.trim());
+                    const texts = [];
+                    const seen = new Set();
+                    const push = (t) => {
+                        t = (t || '').trim();
+                        if (!t) return;
+                        const key = t.toUpperCase();
+                        if (key === 'EST. SHIP' || key === 'COLOR' || key === 'QTY' || key === 'TOTAL') return;
+                        if (seen.has(key)) return;
+                        seen.add(key);
+                        texts.push(t);
+                    };
+                    // Primary: size headers in the order table
+                    document.querySelectorAll('thead span').forEach(span => {
+                        if (!span.hasAttribute('class') || span.classList.contains('small-text')) push(span.textContent);
                     });
-                    return textArray;                      
-                """)
-                si.remove('EST. SHIP')
-                p_size = ' | '.join(i for i in si if len(i) > 0)
-                log(p_size)
+                    if (!texts.length) {
+                        document.querySelectorAll('thead th, thead td').forEach(el => push(el.textContent));
+                    }
+                    // Fallbacks: size option lists / selects / swatches
+                    if (!texts.length) {
+                        document.querySelectorAll('[class*="size"] li, [class*="size"] option, span[class*="size"], li[class*="size"], [data-size]').forEach(el => {
+                            push(el.getAttribute('data-size') || el.textContent);
+                        });
+                    }
+                    return texts;
+                """) or []
+                p_size = '|'.join(i.strip() for i in si if i and i.strip())
+                log("Sizes: ", p_size)
             except Exception as e:
                 pass  
             p_colors = ''
             try:
-                colors = driver.execute_script("return document.querySelectorAll('tbody span.span_item_colorname');")
-                p_colors = ' | '.join(i.text for i in colors)
+                colors = driver.execute_script("""
+                    const texts = [];
+                    const seen = new Set();
+                    const push = (t) => {
+                        t = (t || '').trim();
+                        if (!t) return;
+                        const key = t.toUpperCase();
+                        if (seen.has(key)) return;
+                        seen.add(key);
+                        texts.push(t);
+                    };
+                    document.querySelectorAll('tbody span.span_item_colorname').forEach(el => push(el.textContent));
+                    if (!texts.length) {
+                        document.querySelectorAll('span[class*="colorname"], [class*="color-name"], [class*="color_name"], [data-color-name]').forEach(el => {
+                            push(el.getAttribute('data-color-name') || el.textContent);
+                        });
+                    }
+                    if (!texts.length) {
+                        document.querySelectorAll('[class*="color"] img[alt], img[class*="color"][alt]').forEach(el => push(el.getAttribute('alt')));
+                    }
+                    return texts;
+                """) or []
+                p_colors = '|'.join(i.strip() for i in colors if i and i.strip())
+                log("Colors: ", p_colors)
             except Exception as e:
                 pass
             p_details = ''
             try:
-                p_details = driver.execute_script("return document.querySelector('div.detail_cont pre').innerText;")
+                detail_text = driver.execute_script("""
+                    const selectors = ['div.detail_cont pre', 'div.detail_cont', '[class*="detail"] pre', 'div.product-detail', '[class*="description"] pre'];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el && el.innerText && el.innerText.trim()) return el.innerText;
+                    }
+                    return '';
+                """) or ''
+                p_details = fashiongo_filter_details(detail_text)
+                log("Details: ", p_details)
             except Exception as e:
                 pass
             febric_contents = ''
@@ -73,10 +140,25 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 pass
             p_images = ''
             try:
-                elem = driver.find_element(By.XPATH, '//div[@class="pdt_img"]').find_elements(By.TAG_NAME, 'img')
-                elems = [i.get_attribute('src') for i in elem]
+                elems = driver.execute_script("""
+                    const urls = [];
+                    const seen = new Set();
+                    const push = (src) => {
+                        if (!src) return;
+                        try { src = new URL(src, document.baseURI).href; } catch (e) { return; }
+                        if (!/^https?:/i.test(src)) return;
+                        if (seen.has(src)) return;
+                        seen.add(src);
+                        urls.push(src);
+                    };
+                    const containers = document.querySelectorAll('div.pdt_img, [class*="pdt_img"], [class*="product-image"], [class*="product_img"], [class*="prod-img"], [class*="thumb"]');
+                    containers.forEach(c => c.querySelectorAll('img').forEach(img => {
+                        push(img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src'));
+                    }));
+                    return urls;
+                """) or []
                 p_images = ', '.join(i.replace('large', 'original') for i in elems)
-                # log(p_images)
+                log("Images: ", p_images)
             except Exception as e:
                 pass 
             p_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
