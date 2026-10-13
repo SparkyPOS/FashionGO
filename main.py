@@ -1149,6 +1149,19 @@ def crossroads_extract_price(driver):
                     matches.append(value)
         return matches
 
+    def highest_price(prices):
+        best = ''
+        best_value = None
+        for price in prices:
+            value = re.search(r'\d[\d,]*(?:\.\d+)?', str(price))
+            if not value:
+                continue
+            amount = float(value.group(0).replace(',', ''))
+            if best_value is None or amount > best_value:
+                best = str(price).strip()
+                best_value = amount
+        return best
+
     # Sweep every element whose class/id mentions "price", including shadow DOM
     # and same-origin iframes (the emun shop renders price via JS components).
     try:
@@ -1177,7 +1190,7 @@ def crossroads_extract_price(driver):
             continue
         candidates.extend(price_matches(text, price_pattern))
     if candidates:
-        return candidates[-1].strip()
+        return highest_price(candidates)
     for text in texts:
         if re.search(r'log\s*in|sign\s*in|login', text, re.I):
             continue
