@@ -10,6 +10,8 @@ from unittest.mock import Mock
 # Load only the scraper functions so tests do not install browser dependencies.
 source = Path(__file__).resolve().parents[1] / 'main.py'
 names = {
+    'crossroads_is_logged_in',
+    'fashiongo_is_logged_in',
     'crossroads_price_after_sku',
     'crossroads_price_hidden_by_login',
     'crossroads_scrape_product_page',
@@ -74,6 +76,7 @@ class CrossroadsPriceTests(unittest.TestCase):
         driver = Mock()
         driver.find_element.side_effect = LookupError
         driver.execute_script.side_effect = [
+            False,
             '$5.20\nSKU: ABC\n$5.20',
             [],
         ]
@@ -85,6 +88,7 @@ class CrossroadsPriceTests(unittest.TestCase):
         driver = Mock()
         driver.find_element.side_effect = LookupError
         driver.execute_script.side_effect = [
+            False,
             'Loading\nSKU: ABC',
             '$6.25',
         ]
@@ -144,7 +148,7 @@ class CrossroadsPriceTests(unittest.TestCase):
         driver = Mock()
         driver.find_element.side_effect = LookupError
         body = 'SKU: ABC\nRelated Products\n$5.20'
-        driver.execute_script.side_effect = [body, '', [], '<html></html>', []]
+        driver.execute_script.side_effect = [False, body, '', [], '<html></html>', []]
         row = namespace['crossroads_scrape_product_page'](driver, 'https://example.com/product')
         self.assertEqual(row[2], '')
 
@@ -163,6 +167,7 @@ class CrossroadsPriceTests(unittest.TestCase):
         driver = Mock()
         driver.find_element.side_effect = LookupError
         driver.execute_script.side_effect = [
+            False,
             'SKU: ABC\nCase price $5.20\n$40.00',
             '$40.00',
         ]
@@ -178,6 +183,16 @@ class CrossroadsPriceTests(unittest.TestCase):
         ]:
             with self.subTest(text=text):
                 self.assertTrue(namespace['crossroads_price_hidden_by_login'](text))
+
+    def test_detects_logged_in_state_for_fashiongo_and_crossroads(self):
+        fake = Mock()
+        fake.execute_script.side_effect = [
+            True,
+            True,
+            False,
+        ]
+        self.assertTrue(namespace['fashiongo_is_logged_in'](fake))
+        self.assertTrue(namespace['crossroads_is_logged_in'](fake))
 
     def test_extracts_product_metadata_fields(self):
         metadata = namespace['crossroads_extract_product_metadata'](

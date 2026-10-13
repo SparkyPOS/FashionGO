@@ -179,6 +179,15 @@ def login(driver):
     driver.execute_script(clicker, submit)
     sleep(3)
 
+    if fashiongo_is_logged_in(driver):
+        print('FashionGO login successful.')
+    else:
+        page_url = (driver.current_url or '').lower()
+        if 'login' in page_url or 'signin' in page_url or 'register' in page_url:
+            print('FashionGO login did not complete; still on the login page.')
+        else:
+            print('FashionGO login submitted; could not confirm an authenticated session.')
+
     cookies = driver.get_cookies()
     with open(COOKIES_PATH, 'wb') as f:
         pickle.dump(cookies, f)
@@ -194,7 +203,32 @@ def sign_in(driver):
         driver.add_cookie(cookie)
     driver.refresh()
     sleep(3)
-    return driver 
+    if fashiongo_is_logged_in(driver):
+        print('FashionGO session already logged in.')
+    return driver
+
+
+def fashiongo_is_logged_in(driver):
+    try:
+        return bool(driver.execute_script(r"""
+            const loginLike = /(log\s*in|sign\s*in|register|create\s+account|join\s+now)/i;
+            const authLike = /(logout|log\s*out|sign\s*out|log\s*off|sign\s*off|my\s+account|account|orders?|wishlist|saved\s+items|welcome|profile)/i;
+            const authCookie = !!(document.cookie || '') && /(auth|session|customer|user|token)/i.test(document.cookie);
+            const onLoginRoute = /\/(login|signin|register|join|account)\b/i.test(location.href || '');
+            const navSignals = Array.from(document.querySelectorAll('a, button, span, li, div')).some(el => {
+                const text = [
+                    el.textContent || '',
+                    el.getAttribute('aria-label') || '',
+                    el.getAttribute('title') || '',
+                    el.getAttribute('href') || ''
+                ].join(' ').toLowerCase();
+                if (/(logout|log\s*out|sign\s*out|log\s*off|sign\s*off)/i.test(text)) return true;
+                return authLike.test(text) && !loginLike.test(text);
+            });
+            return !onLoginRoute && (navSignals || authCookie);
+        """))
+    except Exception:
+        return False
 
 
 def duke_is_logged_in(driver):
@@ -731,14 +765,19 @@ CROSSROADS_BASE_URL = 'https://wholesale.crossroadsfamily.com'
 def crossroads_is_logged_in(driver):
     try:
         return bool(driver.execute_script(r"""
-            const links = Array.from(document.querySelectorAll('a, button'));
-            return links.some(el => {
+            const pageText = ((document.body ? document.body.innerText : '') + ' ' + (location.href || '')).toLowerCase();
+            const loginText = /(log\s*in|sign\s*in|create\s+account|join\s+now)/i;
+            const authLabel = /(?:logout|log\s*out|sign\s*out|log\s*off|sign\s*off|my\s+account|account|profile|orders?|saved\s+items|wishlist|welcome)/i;
+            const matches = Array.from(document.querySelectorAll('a, button, span, div, li')).some(el => {
                 const href = (el.getAttribute('href') || '').toLowerCase();
-                const text = (el.textContent || '').toLowerCase();
-                const onclick = (el.getAttribute('onclick') || '').toLowerCase();
-                return href.includes('logout') || href.includes('signout') || onclick.includes('logout')
-                    || text.includes('log out') || text.includes('logout') || text.includes('sign out');
+                const title = (el.getAttribute('title') || '').toLowerCase();
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                const text = ((el.textContent || '') + ' ' + title + ' ' + aria).toLowerCase();
+                const combined = `${href} ${text}`;
+                if (/(logout|log\s*out|sign\s*out|log\s*off|sign\s*off)/i.test(combined)) return true;
+                return authLabel.test(text) && !loginText.test(text) && !loginText.test(pageText);
             });
+            return matches || (!!document.cookie && /(?:auth|session|customer|user|token)/i.test(document.cookie) && !loginText.test(pageText));
         """))
     except Exception:
         return False
@@ -874,7 +913,11 @@ def crossroads_login(driver, base_url=None):
     if crossroads_is_logged_in(driver):
         print('CrossRoads login successful.')
     else:
-        print('CrossRoads login submitted; could not confirm a logout link, continuing.')
+        page_url = (driver.current_url or '').lower()
+        if 'login' in page_url or 'signin' in page_url or 'join' in page_url:
+            print('CrossRoads login did not complete; still on the login page.')
+        else:
+            print('CrossRoads login submitted; could not confirm an authenticated session, continuing.')
     return driver
 
 
