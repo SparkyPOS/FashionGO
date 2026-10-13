@@ -78,8 +78,8 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
             if fixed_price:
                 p_price = fixed_price
 
-            data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images, p_text]
-            if keyword and keyword.lower() not in ' '.join(str(i) for i in data).lower():
+            data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images]
+            if keyword and keyword.lower() not in ' '.join(str(i) for i in data + [p_text]).lower():
                 print('Skipped (keyword not found): ', p_title)
                 continue
             csvWriter(data, key)
@@ -670,7 +670,7 @@ def duke_scrape_product_page(driver, product_url):
     if not title and not sku and not price and not description:
         return None
 
-    return [title, sku, price, '', '', description, '', ', '.join(images), body_text]
+    return [title, sku, price, '', '', description, '', ', '.join(images)]
 
 
 def duke_scrape_category(driver, category_url, key):
@@ -1729,10 +1729,13 @@ def crossroads_price_after_sku(body_text, sku):
 
 CROSSROADS_IMAGES_JS = r"""
     // Collect product images, including ones rendered inside shadow DOM by the
-    // emun shop components. Two tiers: "strict" (clearly product gallery images)
-    // and "relaxed" (anything plausible) so that over-filtering can never leave
-    // a product with zero images when the page has some.
+    // emun shop components. Three tiers: "gallery" (images inside the main
+    // product gallery), "strict" (clearly product-like images) and "relaxed"
+    // (anything plausible). When the page has a product gallery, only its
+    // images are returned so other products on the page are never picked up;
+    // the looser tiers only exist so a product never ends up with zero images.
     const seen = new Set();
+    const gallery = [];
     const strict = [];
     const relaxed = [];
     const BAD_URL = /placeholder|logo|sprite|spinner|loading|star|rating|review|banner|icon|badge|button|favicon|captcha|\.svg(\?|$)/;
@@ -1755,12 +1758,13 @@ CROSSROADS_IMAGES_JS = r"""
         if (!src) return null;
         try { return new URL(src, document.baseURI).href; } catch (e) { return null; }
     };
-    const pushUrl = (href, area, preferred) => {
+    const pushUrl = (href, area, tier) => {
         if (!href || href.startsWith('data:') || href.startsWith('javascript:')) return;
         if (BAD_URL.test(href.toLowerCase())) return;
         if (seen.has(href)) return;
         seen.add(href);
-        (preferred ? strict : relaxed).push({ src: href, area: area || 0 });
+        const bucket = tier === 'gallery' ? gallery : (tier === 'strict' ? strict : relaxed);
+        bucket.push({ src: href, area: area || 0 });
     };
     const largestFromSrcset = (el) => {
         const srcset = el.getAttribute('data-srcset') || el.getAttribute('srcset');
@@ -1800,9 +1804,10 @@ CROSSROADS_IMAGES_JS = r"""
         }
         // Prefer the main product gallery and drop tiny thumbnail/review images
         // that are only visible in a carousel or listing grid.
-        const preferred = !!highRes || insideGallery || area >= 200 * 200;
         if (!insideGallery && area && area < 80 * 80) return;
-        pushUrl(src, area, preferred && !(area && area < 80 * 80));
+        if (area && area < 80 * 80) { pushUrl(src, area, 'relaxed'); return; }
+        const tier = insideGallery ? 'gallery' : ((!!highRes || area >= 200 * 200) ? 'strict' : 'relaxed');
+        pushUrl(src, area, tier);
     };
     const collectAnchor = (a) => {
         const href = resolve(a.getAttribute('href') || '');
@@ -1810,7 +1815,7 @@ CROSSROADS_IMAGES_JS = r"""
         if (inZone(a, BAD_ZONE)) return;
         const insideGallery = inZone(a, GALLERY) || isMainProductGallery(a);
         if (!insideGallery && href.toLowerCase().includes('thumbnail')) return;
-        pushUrl(href, 0, insideGallery);
+        pushUrl(href, 0, insideGallery ? 'gallery' : 'relaxed');
     };
     const collectBackground = (el) => {
         if (!inZone(el, GALLERY) || inZone(el, BAD_ZONE)) return;
@@ -1819,7 +1824,7 @@ CROSSROADS_IMAGES_JS = r"""
         const match = bg.match(/url\((['"]?)(.*?)\1\)/);
         if (!match || !match[2]) return;
         const r = el.getBoundingClientRect();
-        pushUrl(resolve(match[2]), (r.width || 0) * (r.height || 0), true);
+        pushUrl(resolve(match[2]), (r.width || 0) * (r.height || 0), 'gallery');
     };
     const visit = (root) => {
         for (const el of root.querySelectorAll('*')) {
@@ -1834,7 +1839,7 @@ CROSSROADS_IMAGES_JS = r"""
     for (const frame of document.querySelectorAll('iframe')) {
         try { if (frame.contentDocument) visit(frame.contentDocument); } catch (e) {}
     }
-    const picked = strict.length ? strict : relaxed;
+    const picked = gallery.length ? gallery : (strict.length ? strict : relaxed);
     picked.sort((a, b) => b.area - a.area);
     const deduped = [];
     const seenUrls = new Set();
@@ -2068,7 +2073,7 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     if not title and not sku and not price and not description and not metadata_block:
         return None
 
-    return [title, sku, price, '', '', description_text, '', ', '.join(images), body_text]
+    return [title, sku, price, '', '', description_text, '', ', '.join(images)]
 
 
 def crossroads_set_page(url, page_number):
