@@ -13,6 +13,7 @@ names = {
     'crossroads_is_logged_in',
     'fashiongo_is_logged_in',
     'crossroads_price_after_sku',
+    'crossroads_scent_description',
     'crossroads_price_hidden_by_login',
     'crossroads_scrape_product_page',
     'crossroads_extract_price',
@@ -257,6 +258,26 @@ class CrossroadsQuickViewTests(unittest.TestCase):
         self.assertEqual(row[2], '$12.50')
         self.assertEqual(row[5], 'Our famous buttered maple syrup candle.')
         self.assertEqual(row[7], 'https://cdn11.bigcommerce.com/s-abc/images/stencil/original/products/101/900/jar.jpg')
+
+    def test_quick_view_description_uses_scent_description_only(self):
+        driver = self._driver({
+            'title': 'Buttered Maple Syrup 26 oz Jar',
+            'sku': 'BMS-26',
+            'price': '$12.50',
+            'description': 'Burn Time: 100 hours\nScent Description: Warm buttered maple\nsyrup over pancakes.\nWeight: 26 oz',
+            'url': 'https://crossroadscandles.com/buttered-maple-syrup-26-oz-jar/',
+            'images': [],
+        })
+        row, _ = namespace['crossroads_scrape_quick_view'](driver, 0)
+        self.assertEqual(row[5], 'Warm buttered maple syrup over pancakes.')
+
+    def test_scent_description_helper(self):
+        helper = namespace['crossroads_scent_description']
+        self.assertEqual(
+            helper('Scent Description: Fresh linen breeze\n\nITEM #: 123'),
+            'Fresh linen breeze',
+        )
+        self.assertEqual(helper('No label here'), '')
 
     def test_quick_view_without_data_returns_none(self):
         row, dedup_key = namespace['crossroads_scrape_quick_view'](self._driver(None), 0)
