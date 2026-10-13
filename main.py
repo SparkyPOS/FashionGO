@@ -804,7 +804,8 @@ def crossroads_login(driver, base_url=None):
     base_url = base_url or CROSSROADS_BASE_URL
     # crossroadscandles.com uses a dedicated login page; the legacy
     # wholesale.crossroadsfamily.com site used the navbar popup instead.
-    if 'crossroadsfamily.com' in base_url:
+    host = urlparse(base_url).netloc.lower()
+    if host == 'crossroadsfamily.com' or host.endswith('.crossroadsfamily.com'):
         driver.get(base_url + '/shop/?context=shop')
     else:
         driver.get(base_url + CROSSROADS_LOGIN_PATH)
