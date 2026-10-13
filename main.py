@@ -1077,21 +1077,36 @@ CROSSROADS_PRICE_SWEEP_JS = r"""
 
 def crossroads_price_matches(text, price_pattern=r'[$€£]\s*\d[\d,]*(?:\.\d+)?'):
     tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
+
+    def product_hint(fragment):
+        if not fragment:
+            return False
+        if re.search(tier_context, fragment, re.I):
+            return False
+        return bool(re.search(r'(?:^|[^\w])(?:product|our\s+price|unit\s+price|wholesale|price)\b', fragment, re.I))
+
     matches = []
-    for match in re.finditer(price_pattern, text):
-        start, end = match.span()
-        prefix = (text[max(0, start - 40):start] or '').lower()
-        suffix = (text[end:min(len(text), end + 16)] or '').lower()
-        product_hint = bool(re.search(r'(?:^|[^\w])(?:product|our\s+price|unit\s+price|wholesale|price)\b', prefix, re.I))
-        # Ignore quantity/tier labels like "case price" or "12+" unless the
-        # nearby text clearly points to the real product price.
-        if re.search(tier_context, prefix, re.I) and not product_hint:
+    for line in (text or '').splitlines():
+        line = line.strip()
+        if not line or re.search(r'log\s*in|sign\s*in|login', line, re.I):
             continue
-        if not product_hint and re.search(tier_context, suffix, re.I):
+        if re.search(tier_context, line, re.I) and not product_hint(line):
             continue
-        value = match.group(0).strip()
-        if value:
-            matches.append(value)
+        for match in re.finditer(price_pattern, line):
+            start, end = match.span()
+            prefix = (line[max(0, start - 40):start] or '').lower()
+            suffix = (line[end:min(len(line), end + 16)] or '').lower()
+            prefix_hint = product_hint(prefix)
+            suffix_hint = product_hint(suffix)
+            if re.search(tier_context, prefix, re.I) and not prefix_hint:
+                continue
+            if not prefix_hint and re.search(tier_context, suffix, re.I):
+                continue
+            if suffix_hint and not prefix_hint:
+                continue
+            value = match.group(0).strip()
+            if value:
+                matches.append(value)
     return matches
 
 
@@ -1100,22 +1115,38 @@ def crossroads_extract_price(driver):
     bare_number_pattern = r'\d[\d,]*(?:\.\d+)?'
     tier_context = r'(?:as\s+low\s+as|starting\s+at|from\s*\$|related\s+products|recommended\s+products|similar\s+products|you\s+may\s+also\s+like|tier|case\s+price|per\s*(?:case|dozen)|\bcase\b|\bdozen\b|\bbulk\b|qty|quantity|variant|size-option|swatch|\d+\s*\+)'
 
+    def product_hint(fragment):
+        if not fragment:
+            return False
+        if re.search(tier_context, fragment, re.I):
+            return False
+        return bool(re.search(r'(?:^|[^\w])(?:product|our\s+price|unit\s+price|wholesale|price)\b', fragment, re.I))
+
     def price_matches(text, pattern):
         if 'crossroads_price_matches' in globals():
             return crossroads_price_matches(text, pattern)
         matches = []
-        for match in re.finditer(pattern, text):
-            start, end = match.span()
-            prefix = (text[max(0, start - 40):start] or '').lower()
-            suffix = (text[end:min(len(text), end + 16)] or '').lower()
-            product_hint = bool(re.search(r'(?:^|[^\w])(?:product|our\s+price|unit\s+price|wholesale|price)\b', prefix, re.I))
-            if re.search(tier_context, prefix, re.I) and not product_hint:
+        for line in (text or '').splitlines():
+            line = line.strip()
+            if not line or re.search(r'log\s*in|sign\s*in|login', line, re.I):
                 continue
-            if not product_hint and re.search(tier_context, suffix, re.I):
+            if re.search(tier_context, line, re.I) and not product_hint(line):
                 continue
-            value = match.group(0).strip()
-            if value:
-                matches.append(value)
+            for match in re.finditer(pattern, line):
+                start, end = match.span()
+                prefix = (line[max(0, start - 40):start] or '').lower()
+                suffix = (line[end:min(len(line), end + 16)] or '').lower()
+                prefix_hint = product_hint(prefix)
+                suffix_hint = product_hint(suffix)
+                if re.search(tier_context, prefix, re.I) and not prefix_hint:
+                    continue
+                if not prefix_hint and re.search(tier_context, suffix, re.I):
+                    continue
+                if suffix_hint and not prefix_hint:
+                    continue
+                value = match.group(0).strip()
+                if value:
+                    matches.append(value)
         return matches
 
     # Sweep every element whose class/id mentions "price", including shadow DOM
