@@ -151,6 +151,16 @@ class CrossroadsPriceTests(unittest.TestCase):
         ]
         self.assertEqual(namespace['crossroads_extract_price'](driver), '$6.25')
 
+    def test_ignores_stale_tier_listing_price_when_real_price_is_visible(self):
+        driver = Mock()
+        driver.find_element.side_effect = LookupError
+        driver.execute_script.side_effect = [
+            'SKU: ABC\nCase price $5.20\n$40.00',
+            '$40.00',
+        ]
+        row = namespace['crossroads_scrape_product_page'](driver, 'https://example.com/product', listing_price='$5.20')
+        self.assertEqual(row[2], '$40.00')
+
     def test_extracts_product_metadata_fields(self):
         metadata = namespace['crossroads_extract_product_metadata'](
             'ITEM #: 12345\nMINIMUM QTY: 12\nDIMENSIONS: 8 x 8\nDESIGNER: River\nDescription: Premium candle'
