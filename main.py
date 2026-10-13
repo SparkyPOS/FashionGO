@@ -759,7 +759,8 @@ def duke_scrape_category(driver, category_url, key):
         driver.implicitly_wait(10)
 
 
-CROSSROADS_BASE_URL = 'https://wholesale.crossroadsfamily.com'
+CROSSROADS_BASE_URL = 'https://crossroadscandles.com'
+CROSSROADS_LOGIN_PATH = '/login.php'
 
 
 def crossroads_is_logged_in(driver):
@@ -786,12 +787,13 @@ def crossroads_is_logged_in(driver):
 
 
 def crossroads_base_url(category_url=None):
-    # Category URLs may live on a subdomain (e.g. fragrance.wholesale.crossroadsfamily.com);
-    # log in and filter links on that same host.
+    # Category URLs may live on a subdomain; log in and filter links on that
+    # same host. The legacy wholesale.crossroadsfamily.com hosts stay accepted.
     try:
         parsed = urlparse(category_url or '')
         host = parsed.netloc.lower()
-        if host == 'crossroadsfamily.com' or host.endswith('.crossroadsfamily.com'):
+        if (host == 'crossroadscandles.com' or host.endswith('.crossroadscandles.com')
+                or host == 'crossroadsfamily.com' or host.endswith('.crossroadsfamily.com')):
             return f'{parsed.scheme or "https"}://{parsed.netloc}'
     except Exception:
         pass
@@ -800,7 +802,12 @@ def crossroads_base_url(category_url=None):
 
 def crossroads_login(driver, base_url=None):
     base_url = base_url or CROSSROADS_BASE_URL
-    driver.get(base_url + '/shop/?context=shop')
+    # crossroadscandles.com uses a dedicated login page; the legacy
+    # wholesale.crossroadsfamily.com site used the navbar popup instead.
+    if 'crossroadsfamily.com' in base_url:
+        driver.get(base_url + '/shop/?context=shop')
+    else:
+        driver.get(base_url + CROSSROADS_LOGIN_PATH)
     sleep(5)
 
     if crossroads_is_logged_in(driver):
@@ -813,72 +820,85 @@ def crossroads_login(driver, base_url=None):
             'or fill crossroads_email/crossroads_password in Config.json.'
         )
 
-    # The login form is a popup opened through the site's navbar helper.
-    # Use the emun provider: it shows the email/password form that matches the
-    # configured credentials. The Google provider opens an OAuth popup that
-    # cannot be completed with email/password automation.
-    login_attempts = [
-        "navbar.login({authProvider:'emun'});",
-        "navbar.login();",
-    ]
-    popup_opened = False
-    for script in login_attempts:
-        try:
-            driver.execute_script(script)
-            popup_opened = True
-            break
-        except Exception:
-            continue
-    if not popup_opened:
-        # Fallback: click any visible login/sign-in trigger in the navbar.
-        try:
-            trigger = driver.find_element(
-                By.XPATH,
-                '//a[contains(translate(normalize-space(.), "LOGIN", "login"), "login") or '
-                'contains(translate(normalize-space(.), "SIGN IN", "sign in"), "sign in")]'
-            )
-            driver.execute_script(clicker, trigger)
-        except Exception:
-            raise RuntimeError('Could not open the CrossRoads login popup (navbar.login failed).')
-    sleep(4)
-
-    # The popup may open in a new window/tab; switch to it if so.
     main_handle = driver.current_window_handle
     popup_handle = None
-    for handle in driver.window_handles:
-        if handle != main_handle:
-            popup_handle = handle
-            driver.switch_to.window(handle)
-            break
+    password_selectors = ['input[name="login_pass"]', 'input[type="password"]', 'input[name="password"]', '#password']
 
-    email_field = None
+    # Prefer a login form rendered directly on the page (e.g. /login.php).
     password_field = None
-    for selector in ['input[type="password"]', 'input[name="password"]', '#password']:
+    for selector in password_selectors:
         try:
-            password_field = driver.find_element(By.CSS_SELECTOR, selector)
-            break
+            candidate = driver.find_element(By.CSS_SELECTOR, selector)
+            if candidate.is_displayed():
+                password_field = candidate
+                break
         except Exception:
             pass
 
     if password_field is None:
-        # The popup may be rendered inside an iframe on the same page.
-        for frame in driver.find_elements(By.TAG_NAME, 'iframe'):
+        # Legacy flow: the login form is a popup opened through the site's
+        # navbar helper. Use the emun provider: it shows the email/password
+        # form that matches the configured credentials. The Google provider
+        # opens an OAuth popup that cannot be completed with automation.
+        login_attempts = [
+            "navbar.login({authProvider:'emun'});",
+            "navbar.login();",
+        ]
+        popup_opened = False
+        for script in login_attempts:
             try:
-                driver.switch_to.frame(frame)
-                password_field = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+                driver.execute_script(script)
+                popup_opened = True
                 break
             except Exception:
-                driver.switch_to.default_content()
+                continue
+        if not popup_opened:
+            # Fallback: click any visible login/sign-in trigger in the navbar.
+            try:
+                trigger = driver.find_element(
+                    By.XPATH,
+                    '//a[contains(translate(normalize-space(.), "LOGIN", "login"), "login") or '
+                    'contains(translate(normalize-space(.), "SIGN IN", "sign in"), "sign in")]'
+                )
+                driver.execute_script(clicker, trigger)
+            except Exception:
+                raise RuntimeError('Could not open the CrossRoads login popup (navbar.login failed).')
+        sleep(4)
+
+        # The popup may open in a new window/tab; switch to it if so.
+        for handle in driver.window_handles:
+            if handle != main_handle:
+                popup_handle = handle
+                driver.switch_to.window(handle)
+                break
+
+        for selector in password_selectors:
+            try:
+                password_field = driver.find_element(By.CSS_SELECTOR, selector)
+                break
+            except Exception:
+                pass
+
+        if password_field is None:
+            # The popup may be rendered inside an iframe on the same page.
+            for frame in driver.find_elements(By.TAG_NAME, 'iframe'):
+                try:
+                    driver.switch_to.frame(frame)
+                    password_field = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+                    break
+                except Exception:
+                    driver.switch_to.default_content()
 
     if password_field is None:
-        raise RuntimeError('Could not find the CrossRoads login popup password field.')
+        raise RuntimeError('Could not find the CrossRoads login password field.')
 
     scope = driver
     try:
         scope = password_field.find_element(By.XPATH, 'ancestor::form[1]')
     except Exception:
         pass
-    for selector in ['input[type="email"]', 'input[name="email"]', 'input[name="username"]', '#email', '#username', 'input[type="text"]']:
+    email_field = None
+    for selector in ['input[name="login_email"]', 'input[type="email"]', 'input[name="email"]', 'input[name="username"]', '#email', '#username', 'input[type="text"]']:
         try:
             email_field = scope.find_element(By.CSS_SELECTOR, selector)
             break
@@ -886,7 +906,7 @@ def crossroads_login(driver, base_url=None):
             pass
 
     if email_field is None:
-        raise RuntimeError('Could not find the CrossRoads login popup email field.')
+        raise RuntimeError('Could not find the CrossRoads login email field.')
 
     email_field.clear()
     email_field.send_keys(crossroads_email)
@@ -960,6 +980,8 @@ def crossroads_get_product_links(driver, allowed_host=None):
             host = urlparse(href).netloc.lower()
             if allowed and host == allowed:
                 return True
+            if host == 'crossroadscandles.com' or host.endswith('.crossroadscandles.com'):
+                return True
             return host == 'wholesale.crossroadsfamily.com' or host.endswith('.crossroadsfamily.com')
         links = [href for href in hrefs if host_ok(href)]
         if links:
@@ -969,6 +991,7 @@ def crossroads_get_product_links(driver, allowed_host=None):
             const seen = new Set();
             const selectors = '[class*="product-card"] a, [class*="productCard"] a, ' +
                 '[class*="product-tile"] a, [class*="product-item"] a, ' +
+                'li.product a, [class*="card-title"] a, [class*="card-figure"] a, ' +
                 '.card a, [class*="grid-item"] a, [class*="item-card"] a';
             return Array.from(document.querySelectorAll(selectors))
                 .map(link => link.href)
