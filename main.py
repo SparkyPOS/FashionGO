@@ -175,89 +175,72 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
         except Exception as e:
             pass 
 
-def get_vendor(driver):
-    vendor_url_list = []
-    try:
-        vendors = driver.find_element(By.ID, 'item-found').find_elements(By.XPATH, './/div[@data-nclick-name="cate.list.vlink"]')
-        log('Total Vendor found: ', len(vendors))
-        if len(vendors) < 1:
-            return vendor_url_list
-        for vendor in vendors:
-            vendor_url = vendor.find_element(By.TAG_NAME, 'a').get_attribute('href')
-            vendor_url_list.append(vendor_url)
-    except Exception as e:
-        pass 
-    return vendor_url_list
+def fashiongo_collect_product_links(driver):
+    """Collect every product link visible on the current FashionGO page."""
+    links = driver.execute_script("""
+        const urls = [];
+        const seen = new Set();
+        document.querySelectorAll('a[href*="/Item/"]').forEach(a => {
+            let href = a.href || '';
+            if (!href) return;
+            if (seen.has(href)) return;
+            seen.add(href);
+            urls.push(href);
+        });
+        return urls;
+    """) or []
+    return links
 
-def scraper(driver, vendors, number, key, scrap_driver):
-    if number == 1:
-        for vendor in vendors:
-            try:
-                driver.execute_script(f"window.open('{vendor}')")
-                driver.switch_to.window(driver.window_handles[1])
-                sleep(5)
-                products_all = driver.find_element(By.XPATH, '//a[@data-nclick-name="vendor.new.viewmore"]').get_attribute('href')
-                log(products_all)
-                driver.get(products_all)
-                items_checker = False
-                while True:
-                    product_url_list = []
-                    try:
-                        items = driver.find_elements(By.XPATH, '//a[@data-nclick-name="vendor.new.item"]')
-                        log('Total Items: ', len(items))
-                        if len(items) < 1:
-                            break
-                        for item in items[::2]:
-                            try:
-                                item_url = item.get_attribute('href')
-                                log(item_url)
-                                product_url_list.append(item_url)
-                            except:
-                                pass 
-                        product_details_scrap(scrap_driver, product_url_list, key)
-                    except Exception as e:
-                        log(e)
-                        items_checker = True
-                        break
-                    try:
-                        next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                        driver.execute_script(clicker, next)
-                        sleep(6)
-                    except:
-                        break
 
-                # pagination 
-                if items_checker:
-                    try:
-                        next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                        while True:
-                            # scraping part here
-                            vendors = get_vendor(driver)
-                            scraper(driver, vendors, number, key, scrap_driver) 
-                            try:
-                                next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                                driver.execute_script(clicker, next)
-                                sleep(6)
-                            except:
-                                break
-                    except Exception as e:
-                        pass 
-
-                driver.close()
-                driver.switch_to.window(driver.window_handles[0])
-            except Exception as e:
-                pass 
-
-    else:
+def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keyword=None):
+    """Scrape every product on a FashionGO listing URL, following pagination."""
+    driver.get(url)
+    sleep(10)
+    seen_urls = set()
+    while True:
+        product_url_list = []
         try:
-            items = driver.find_elements(By.XPATH, '//a[@data-nclick-name="catal.list.item"]')
-            log('Total Items: ', len(items))
-            for item in items:
-                item_url = item.get_attribute('href')
+            links = fashiongo_collect_product_links(driver)
+            log('Total Items: ', len(links))
+            for item_url in links:
+                if item_url in seen_urls:
+                    continue
+                seen_urls.add(item_url)
                 log(item_url)
-
+                product_url_list.append(item_url)
         except Exception as e:
             log(e)
+            break
+        if product_url_list:
+            product_details_scrap(scrap_driver, product_url_list, key, fixed_price, keyword)
+        try:
+            next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
+            if next is None:
+                break
+            driver.execute_script(clicker, next)
+            sleep(6)
+            is_visible = driver.execute_script("""
+            return (function () {
+            const el = document.querySelector(
+                'li.btn_next_paging.paging-button.paging-next'
+            );
+
+            if (!el) return false;
+
+            const style = window.getComputedStyle(el);
+            return (
+                style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                style.opacity !== '0' &&
+                el.offsetWidth > 0 &&
+                el.offsetHeight > 0
+            );
+            })();
+            """)
+            if is_visible is False:
+                break
+        except:
+            break
 
 
 def login(driver):
@@ -1363,7 +1346,7 @@ def crossroads_extract_price(driver):
                 best_value = amount
         return best
 
-    # Option 5 pages sometimes expose the canonical price in a snippet field.
+    # CrossRoads pages sometimes expose the canonical price in a snippet field.
     # Collect these values but do not trust the first one blindly: stale tier
     # values like "Case price $5.20" can appear before the real product price.
     try:
@@ -2548,76 +2531,13 @@ def crossroads_scrape_category(driver, category_url, key):
 def main(driver, number, scrap_driver):
     try:
         if number == 1:
-            main_categories = driver.find_elements(By.XPATH, "//a[starts-with(@href, '/Category?')]")
-            m_cat_list = {}
-            for cat in main_categories:
-                cat_name = driver.execute_script("return arguments[0].querySelector('span').innerText;", cat)
-                cat_link = cat.get_attribute('href')
-                m_cat_list[cat_name] = cat_link
-            for index, item in enumerate(m_cat_list.keys()):
-                log(index, '-> ', item) 
-            
-            select_cat = int(input('Select A Category\n'))
-            key = list(m_cat_list.keys())[select_cat]
-            csvMaker(key)
-            get_url = m_cat_list.get(key)
-            driver.get(get_url)
-            sleep(10)
-            # pagination 
-            try:
-                next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                while True:
-                    # scraping part here
-                    vendors = get_vendor(driver)
-                    scraper(driver, vendors, number, key, scrap_driver) 
-                    try:
-                        next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                        driver.execute_script(clicker, next)
-                        sleep(6)
-                    except:
-                        break
-            except Exception as e:
-                pass 
-            
-
-
-        if number == 2:
-            sub_categories = driver.find_elements(By.XPATH, "//a[starts-with(@href, '/Catalog?')]")
-            s_cat_list = {}
-        
-            for cat in sub_categories:
-                cat_name = driver.execute_script("return arguments[0].querySelector('span').innerText;", cat)
-                cat_link = cat.get_attribute('href')
-                s_cat_list[cat_name] = cat_link
-
-            for index, item in enumerate(s_cat_list.keys()):
-                log(index, '-> ', item)  
-
-              
-            select_cat = int(input('Select A Catalog\n'))
-            key = list(s_cat_list.keys())[select_cat]
-            csvMaker(key)
-            get_url = s_cat_list.get(key)
-            driver.get(get_url)
-            sleep(10)
-            # pagination 
-            try:
-                next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                while True:
-                    # scraping part here
-                    scraper(driver, vendors, number, key, scrap_driver) 
-                    try:
-                        next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                        driver.execute_script(clicker, next)
-                        sleep(6)
-                    except:
-                        break
-            except Exception as e:
-                pass
-
-        if number == 3:
-            v_link = input('Vendor Link: ')
-            key = v_link.rsplit('/', 1)[-1]
+            fg_url = input('FashionGO URL: ').strip()
+            if not fg_url:
+                log('No FashionGO URL provided.')
+                return
+            key = input('CSV name (leave blank to derive from URL): ').strip()
+            if not key:
+                key = urlparse(fg_url).path.rstrip('/').rsplit('/', 1)[-1] or 'fashiongo'
             fixed_price = input('Enter a price to set for all items (leave empty to keep original prices): ').strip()
             if not fixed_price:
                 fixed_price = None
@@ -2626,74 +2546,12 @@ def main(driver, number, scrap_driver):
                 keyword = None
             csvMaker(key)
             try:
-                driver.get(v_link)
-                products_all = driver.find_element(By.XPATH, '//a[@data-nclick-name="vendor.menu.allitems"]').get_attribute('href')
-                log(products_all)
-                driver.get(products_all)
-                while True:
-                    product_url_list = []
-                    try:
-                        items = driver.find_elements(By.XPATH, '//a[@data-nclick-name="vendor.allitems.item"]')
-                        log('Total Items: ', len(items))
-                        if len(items) < 1:
-                            break
-                        for item in items[::2]:
-                            try:
-                                item_url = item.get_attribute('href')
-                                log(item_url)
-                                product_url_list.append(item_url)
-                            except:
-                                pass 
-                        product_details_scrap(scrap_driver, product_url_list, key, fixed_price, keyword)
-                    except Exception as e:
-                        pass 
-                        items_checker = True
-                        break
-                    try:
-                        next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                        driver.execute_script(clicker, next)
-                        sleep(6)
-                        is_visible = driver.execute_script("""
-                        return (function () {
-                        const el = document.querySelector(
-                            'li.btn_next_paging.paging-button.paging-next'
-                        );
-
-                        if (!el) return false;
-
-                        const style = window.getComputedStyle(el);
-                        return (
-                            style.display !== 'none' &&
-                            style.visibility !== 'hidden' &&
-                            style.opacity !== '0' &&
-                            el.offsetWidth > 0 &&
-                            el.offsetHeight > 0
-                        );
-                        })();
-                        """)
-                        if is_visible is False:
-                            break
-                    except:
-                        break
-
-                # pagination 
-                # if items_checker:
-                #     try:
-                #         next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                #         while True:
-                #             # scraping part here
-                #             try:
-                #                 next = driver.execute_script("return document.querySelector('li.btn_next_paging')")
-                #                 driver.execute_script(clicker, next)
-                #                 sleep(6)
-                #             except:
-                #                 break
-                #     except Exception as e:
-                #         pass
+                fashiongo_scrape_url(driver, fg_url, key, scrap_driver, fixed_price, keyword)
             except Exception as e:
                 log(e)
 
-        if number == 4:
+
+        if number == 2:
             duke_url = input('Duke Imports category URL: ').strip()
             if not duke_url:
                 log('No Duke URL provided.')
@@ -2702,7 +2560,7 @@ def main(driver, number, scrap_driver):
             csvMaker(key)
             duke_scrape_category(driver, duke_url, key)
 
-        if number == 5:
+        if number == 3:
             crossroads_url = input('CrossRoads category URL: ').strip()
             if not crossroads_url:
                 log('No CrossRoads URL provided.')
@@ -2727,11 +2585,9 @@ if __name__ == '__main__':
     driver.implicitly_wait(10)
     scrap_driver.implicitly_wait(5)
     menu = """
-    1. -> Scrap by Category
-    2. -> Scrap by Catalog
-    3. -> Scrap by vendor link
-    4. -> Scrap Duke Imports category URL
-    5. -> Scrap CrossRoads category URL
+    1. -> Scrap FashionGO URL
+    2. -> Scrap Duke Imports category URL
+    3. -> Scrap CrossRoads category URL
     """
     number = None
     while number is None:
@@ -2740,9 +2596,9 @@ if __name__ == '__main__':
         except EOFError:
             log('No menu selection received; exiting.')
             sys.exit(1)
-        if choice.isdigit() and 1 <= int(choice) <= 5:
+        if choice.isdigit() and 1 <= int(choice) <= 3:
             number = int(choice)
         else:
-            log(f'Invalid selection {choice!r}. Please enter a number from 1 to 5.')
+            log(f'Invalid selection {choice!r}. Please enter a number from 1 to 3.')
     main(driver, number, scrap_driver)
     # product_details_scrap(driver, ['https://www.fashiongo.net/Item/21638783?paKey=202405152c85431acbb0b1e8a2aaeeed7b29cb38&listkey=097a92c8-fcdf-4bb4-bbcc-cdf71b3ed01b'], 'test')
