@@ -1,6 +1,7 @@
 import re
 import sys
 import urllib.request
+from time import time
 from utils import *
 from urllib.parse import urlparse
 
@@ -9,6 +10,11 @@ SCRAPE_VERBOSE = os.getenv('SCRAPE_VERBOSE', '').strip().lower() in {'1', 'true'
 def log(*args, **kwargs):
     if SCRAPE_VERBOSE:
         print(*args, **kwargs)
+
+
+def info(*args, **kwargs):
+    """Always print; used for progress and diagnostics the user must see."""
+    print(*args, **kwargs)
 
 
 DETAIL_SKIP_TERMS = ('pre packed', 'prepacked', 'pcs', 'prepackaged pcs')
@@ -171,9 +177,10 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 log('Skipped (keyword not found): ', p_title)
                 continue
             csvWriter(data, key)
-            
+            info(f'Saved: {p_title or url}')
+
         except Exception as e:
-            pass 
+            info(f'Failed to scrape {url}: {e}')
 
 def fashiongo_scroll_to_load(driver, max_scrolls=20, pause=1.5):
     """Scroll down the page to trigger lazy-loaded product tiles."""
@@ -193,34 +200,141 @@ def fashiongo_scroll_to_load(driver, max_scrolls=20, pause=1.5):
         last_height = height
 
 
-def fashiongo_collect_product_links(driver):
-    """Collect every product link visible on the current FashionGO page."""
-    fashiongo_scroll_to_load(driver)
-    links = driver.execute_script("""
-        const urls = [];
-        const seen = new Set();
-        const push = href => {
-            if (!href) return;
-            if (seen.has(href)) return;
-            seen.add(href);
-            urls.push(href);
-        };
-        // Match product detail links regardless of casing or vendor-prefixed
-        // paths, e.g. /Item/123, /item/123, /ggossip/Item/123, /display/item/123.
-        const itemLike = /\\/item\\/\\d+/i;
-        document.querySelectorAll('a[href]').forEach(a => {
-            const href = a.href || '';
+FASHIONGO_ALL_ITEMS_TAB_JS = """return (function () {
+    const isVisible = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            style.opacity !== '0' &&
+            el.offsetWidth > 0 &&
+            el.offsetHeight > 0;
+    };
+    const isActive = el => {
+        const cls = (el.className || '').toString();
+        if (/\\b(active|selected|current|on)\\b/i.test(cls)) return true;
+        return el.getAttribute('aria-selected') === 'true';
+    };
+    const candidates = [];
+    document.querySelectorAll('a, button, li, [role="tab"]').forEach(el => {
+        const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const href = el.getAttribute && (el.getAttribute('href') || '');
+        const byText = /^all\\s*items?$/i.test(text);
+        const byHref = /all-items/i.test(href || '');
+        if ((byText || byHref) && isVisible(el)) candidates.push(el);
+    });
+    for (const el of candidates) {
+        if (isActive(el) || (el.parentElement && isActive(el.parentElement))) return 'active';
+    }
+    if (candidates.length) {
+        const target = candidates[0];
+        const clickable = target.querySelector('a, button') || target;
+        clickable.click();
+        return 'clicked';
+    }
+    return null;
+})()"""
+
+
+def fashiongo_click_all_items(driver):
+    """Click the vendor storefront 'All Items' tab so the item grid renders."""
+    try:
+        result = driver.execute_script(FASHIONGO_ALL_ITEMS_TAB_JS)
+    except Exception:
+        return False
+    if result == 'clicked':
+        log('Clicked the "All Items" tab.')
+        sleep(6)
+        return True
+    return False
+
+
+FASHIONGO_COLLECT_LINKS_JS = """
+    const urls = [];
+    const seen = new Set();
+    const push = href => {
+        if (!href) return;
+        try { href = new URL(href, document.baseURI).href; } catch (e) { return; }
+        if (seen.has(href)) return;
+        seen.add(href);
+        urls.push(href);
+    };
+    // Match product detail links regardless of casing or vendor-prefixed
+    // paths, e.g. /Item/123, /item/123, /ggossip/Item/123, /display/item/123,
+    // or query-string based links like ?itemNo=123.
+    const itemLike = /\\/item\\/\\d+|[?&]item(?:no|id)=\\d+/i;
+    const visit = root => {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('a[href]').forEach(a => {
+            const href = a.getAttribute('href') || '';
             if (itemLike.test(href)) push(href);
         });
         // Fallback: product tiles that store the item link in a data attribute.
-        document.querySelectorAll('[data-url], [data-href], [data-link]').forEach(el => {
+        root.querySelectorAll('[data-url], [data-href], [data-link]').forEach(el => {
             const raw = el.getAttribute('data-url') || el.getAttribute('data-href') || el.getAttribute('data-link') || '';
-            if (itemLike.test(raw)) {
-                try { push(new URL(raw, document.baseURI).href); } catch (e) {}
-            }
+            if (itemLike.test(raw)) push(raw);
         });
-        return urls;
-    """) or []
+        // Recurse into any shadow roots so SPA-rendered tiles are found too.
+        root.querySelectorAll('*').forEach(el => {
+            if (el.shadowRoot) visit(el.shadowRoot);
+        });
+    };
+    visit(document);
+    return urls;
+"""
+
+
+def fashiongo_links_from_page_source(driver):
+    """Fallback: regex-scan the rendered HTML for /Item/<id> product IDs."""
+    try:
+        html = driver.execute_script(
+            'return document.documentElement ? document.documentElement.outerHTML : "";') or ''
+    except Exception:
+        return []
+    links = []
+    seen = set()
+    for match in re.finditer(r'/(?:[A-Za-z0-9_-]+/)?[Ii]tem/(\d+)', html):
+        item_id = match.group(1)
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        links.append(f'https://www.fashiongo.net/Item/{item_id}')
+    return links
+
+
+def fashiongo_collect_product_links(driver):
+    """Collect every product link visible on the current FashionGO page."""
+    fashiongo_scroll_to_load(driver)
+    try:
+        links = driver.execute_script(FASHIONGO_COLLECT_LINKS_JS) or []
+    except Exception:
+        links = []
+    if links:
+        return links
+    # Vendor storefront pages sometimes render the item grid inside an iframe.
+    try:
+        frames = driver.find_elements(By.TAG_NAME, 'iframe')
+    except Exception:
+        frames = []
+    for index in range(len(frames)):
+        try:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(index)
+            frame_links = driver.execute_script(FASHIONGO_COLLECT_LINKS_JS) or []
+            if frame_links:
+                links = frame_links
+                break
+        except Exception:
+            continue
+        finally:
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
+    if not links:
+        # Last resort: tiles may not use anchors at all (SPA click handlers);
+        # pull item IDs straight out of the rendered markup.
+        links = fashiongo_links_from_page_source(driver)
     return links
 
 
@@ -258,16 +372,42 @@ FASHIONGO_NEXT_BUTTON_JS = """return (function () {
 })()"""
 
 
+def fashiongo_wait_for_links(driver, timeout=60):
+    """Poll for product links, re-clicking the All Items tab while waiting."""
+    deadline = time() + timeout
+    links = fashiongo_collect_product_links(driver)
+    while not links and time() < deadline:
+        info('No items yet; waiting for the item grid to load...')
+        sleep(5)
+        fashiongo_click_all_items(driver)
+        links = fashiongo_collect_product_links(driver)
+    return links
+
+
 def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keyword=None):
     """Scrape every product on a FashionGO listing URL, following pagination."""
+    info(f'Opening {url}')
     driver.get(url)
     sleep(10)
+    fashiongo_click_all_items(driver)
     seen_urls = set()
+    page_number = 1
+    total_scraped = 0
     while True:
         product_url_list = []
         try:
-            links = fashiongo_collect_product_links(driver)
-            log('Total Items: ', len(links))
+            links = fashiongo_wait_for_links(driver)
+            info(f'Page {page_number}: found {len(links)} item link(s).')
+            if not links:
+                try:
+                    current = driver.current_url or ''
+                    title = driver.title or ''
+                except Exception:
+                    current, title = '', ''
+                info(f'No product links found. Current URL: {current} | Page title: {title}')
+                if not fashiongo_is_logged_in(driver):
+                    info('It looks like the session is NOT logged in to FashionGO. '
+                         'Run Login.bat (or loginscript.py) to refresh cookies.pkl and try again.')
             for item_url in links:
                 if item_url in seen_urls:
                     continue
@@ -275,21 +415,26 @@ def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keywo
                 log(item_url)
                 product_url_list.append(item_url)
         except Exception as e:
-            log(e)
+            info(f'Stopped collecting links: {e}')
             break
         if product_url_list:
+            info(f'Scraping {len(product_url_list)} new product(s)...')
             product_details_scrap(scrap_driver, product_url_list, key, fixed_price, keyword)
+            total_scraped += len(product_url_list)
         try:
             next = driver.execute_script(FASHIONGO_NEXT_BUTTON_JS)
             if next is None:
                 break
+            info('Moving to the next page...')
             driver.execute_script(clicker, next)
             sleep(6)
+            page_number += 1
             is_visible = driver.execute_script(FASHIONGO_NEXT_BUTTON_JS + ' !== null')
             if not is_visible:
                 break
         except:
             break
+    info(f'Finished: scraped {total_scraped} product(s) into the "{key}" CSV.')
 
 
 def login(driver):
