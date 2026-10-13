@@ -193,34 +193,119 @@ def fashiongo_scroll_to_load(driver, max_scrolls=20, pause=1.5):
         last_height = height
 
 
-def fashiongo_collect_product_links(driver):
-    """Collect every product link visible on the current FashionGO page."""
-    fashiongo_scroll_to_load(driver)
-    links = driver.execute_script("""
-        const urls = [];
-        const seen = new Set();
-        const push = href => {
-            if (!href) return;
-            if (seen.has(href)) return;
-            seen.add(href);
-            urls.push(href);
-        };
-        // Match product detail links regardless of casing or vendor-prefixed
-        // paths, e.g. /Item/123, /item/123, /ggossip/Item/123, /display/item/123.
-        const itemLike = /\\/item\\/\\d+/i;
-        document.querySelectorAll('a[href]').forEach(a => {
-            const href = a.href || '';
+FASHIONGO_ALL_ITEMS_TAB_JS = """return (function () {
+    const isVisible = el => {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            style.opacity !== '0' &&
+            el.offsetWidth > 0 &&
+            el.offsetHeight > 0;
+    };
+    const isActive = el => {
+        const cls = (el.className || '').toString();
+        if (/\\b(active|selected|current|on)\\b/i.test(cls)) return true;
+        return el.getAttribute('aria-selected') === 'true';
+    };
+    const candidates = [];
+    document.querySelectorAll('a, button, li, [role="tab"]').forEach(el => {
+        const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+        const href = el.getAttribute && (el.getAttribute('href') || '');
+        const byText = /^all\\s*items?$/i.test(text);
+        const byHref = /all-items/i.test(href || '');
+        if ((byText || byHref) && isVisible(el)) candidates.push(el);
+    });
+    for (const el of candidates) {
+        if (isActive(el) || (el.parentElement && isActive(el.parentElement))) return 'active';
+    }
+    if (candidates.length) {
+        const target = candidates[0];
+        const clickable = target.querySelector('a, button') || target;
+        clickable.click();
+        return 'clicked';
+    }
+    return null;
+})()"""
+
+
+def fashiongo_click_all_items(driver):
+    """Click the vendor storefront 'All Items' tab so the item grid renders."""
+    try:
+        result = driver.execute_script(FASHIONGO_ALL_ITEMS_TAB_JS)
+    except Exception:
+        return False
+    if result == 'clicked':
+        log('Clicked the "All Items" tab.')
+        sleep(6)
+        return True
+    return False
+
+
+FASHIONGO_COLLECT_LINKS_JS = """
+    const urls = [];
+    const seen = new Set();
+    const push = href => {
+        if (!href) return;
+        try { href = new URL(href, document.baseURI).href; } catch (e) { return; }
+        if (seen.has(href)) return;
+        seen.add(href);
+        urls.push(href);
+    };
+    // Match product detail links regardless of casing or vendor-prefixed
+    // paths, e.g. /Item/123, /item/123, /ggossip/Item/123, /display/item/123,
+    // or query-string based links like ?itemNo=123.
+    const itemLike = /\\/item\\/\\d+|[?&]item(?:no|id)=\\d+/i;
+    const visit = root => {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('a[href]').forEach(a => {
+            const href = a.getAttribute('href') || '';
             if (itemLike.test(href)) push(href);
         });
         // Fallback: product tiles that store the item link in a data attribute.
-        document.querySelectorAll('[data-url], [data-href], [data-link]').forEach(el => {
+        root.querySelectorAll('[data-url], [data-href], [data-link]').forEach(el => {
             const raw = el.getAttribute('data-url') || el.getAttribute('data-href') || el.getAttribute('data-link') || '';
-            if (itemLike.test(raw)) {
-                try { push(new URL(raw, document.baseURI).href); } catch (e) {}
-            }
+            if (itemLike.test(raw)) push(raw);
         });
-        return urls;
-    """) or []
+        // Recurse into any shadow roots so SPA-rendered tiles are found too.
+        root.querySelectorAll('*').forEach(el => {
+            if (el.shadowRoot) visit(el.shadowRoot);
+        });
+    };
+    visit(document);
+    return urls;
+"""
+
+
+def fashiongo_collect_product_links(driver):
+    """Collect every product link visible on the current FashionGO page."""
+    fashiongo_scroll_to_load(driver)
+    try:
+        links = driver.execute_script(FASHIONGO_COLLECT_LINKS_JS) or []
+    except Exception:
+        links = []
+    if links:
+        return links
+    # Vendor storefront pages sometimes render the item grid inside an iframe.
+    try:
+        frames = driver.find_elements(By.TAG_NAME, 'iframe')
+    except Exception:
+        frames = []
+    for index in range(len(frames)):
+        try:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(index)
+            frame_links = driver.execute_script(FASHIONGO_COLLECT_LINKS_JS) or []
+            if frame_links:
+                links = frame_links
+                break
+        except Exception:
+            continue
+        finally:
+            try:
+                driver.switch_to.default_content()
+            except Exception:
+                pass
     return links
 
 
@@ -262,11 +347,20 @@ def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keywo
     """Scrape every product on a FashionGO listing URL, following pagination."""
     driver.get(url)
     sleep(10)
+    fashiongo_click_all_items(driver)
     seen_urls = set()
     while True:
         product_url_list = []
         try:
             links = fashiongo_collect_product_links(driver)
+            # The storefront grid can load slowly; retry a few times before
+            # concluding the page really has no items.
+            attempts = 0
+            while not links and attempts < 3:
+                attempts += 1
+                sleep(5)
+                fashiongo_click_all_items(driver)
+                links = fashiongo_collect_product_links(driver)
             log('Total Items: ', len(links))
             for item_url in links:
                 if item_url in seen_urls:
