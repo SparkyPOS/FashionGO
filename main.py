@@ -1535,10 +1535,13 @@ def crossroads_element_in_related(driver, element):
 
 
 def crossroads_price_hidden_by_login(body_text):
-    return bool(re.search(
-        r'(?:log\s*in|login|sign\s*in)[^\n]{0,40}(?:price|pricing)|(?:price|pricing)[^\n]{0,40}(?:log\s*in|login|sign\s*in)',
-        body_text, re.I,
-    ))
+    text = body_text or ''
+    patterns = [
+        r'(?:log\s*in|login|sign\s*in|sign\s*up|member\s+pricing|please\s+log\s+in)[^\n]{0,80}(?:price|pricing|details|item)',
+        r'(?:price|pricing|details|item)[^\n]{0,80}(?:log\s*in|login|sign\s*in|please\s+log\s+in)',
+        r'(?:requires?\s+login|login\s+to\s+view\s+price|view\s+price\s+after\s+login)',
+    ]
+    return any(re.search(pattern, text, re.I) for pattern in patterns)
 
 
 def crossroads_extract_product_metadata(body_text):
@@ -1778,6 +1781,17 @@ def crossroads_sort_images_by_file_size(driver, urls):
 
 
 def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, listing_price=''):
+    if allow_relogin and 'crossroads_is_logged_in' in globals():
+        try:
+            if not globals()['crossroads_is_logged_in'](driver):
+                print('CrossRoads session appears logged out; logging in before product-price scrape.')
+                try:
+                    globals()['crossroads_login'](driver, crossroads_base_url(product_url))
+                except Exception as exc:
+                    print(f'CrossRoads pre-login failed: {exc}')
+        except Exception:
+            pass
+
     driver.get(product_url)
     sleep(4)
 
