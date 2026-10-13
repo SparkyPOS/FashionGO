@@ -1,4 +1,4 @@
-import csv, json, os, sys, pickle, subprocess, site, importlib, importlib.util, shutil
+import csv, json, os, sys, pickle, subprocess, site, importlib, importlib.util, shutil, tempfile
 from time import sleep
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -193,6 +193,14 @@ def _chrome_user_data_dir():
     return None, None
 
 
+def _safe_chrome_temp_profile():
+    profiles_root = os.getenv('CHROME_USER_DATA_DIR')
+    if profiles_root:
+        return profiles_root, os.getenv('CHROME_PROFILE_DIRECTORY') or 'Default'
+    temp_dir = tempfile.mkdtemp(prefix='fashiongo-chrome-')
+    return temp_dir, 'Default'
+
+
 def get_browser(headless=False, sel=False, incognito=None):
     download_directory = DATA_DIR
     agent = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.2 (KHTML, like Gecko) Chrome/124.0.1216.0 Safari/537.2'
@@ -202,7 +210,7 @@ def get_browser(headless=False, sel=False, incognito=None):
     s = Service(executable_path=driver_path)
     chrome_binary = _resolve_chrome_binary()
 
-    def build_options(use_headless, use_incognito):
+    def build_options(use_headless, use_incognito, force_temp_profile=False):
         chrome_option = webdriver.ChromeOptions()
         if chrome_binary:
             chrome_option.binary_location = chrome_binary
@@ -216,7 +224,10 @@ def get_browser(headless=False, sel=False, incognito=None):
         if use_incognito:
             chrome_option.add_argument('--incognito')
         else:
-            user_data_dir, profile_dir = _chrome_user_data_dir()
+            if force_temp_profile:
+                user_data_dir, profile_dir = _safe_chrome_temp_profile()
+            else:
+                user_data_dir, profile_dir = _chrome_user_data_dir()
             if user_data_dir:
                 chrome_option.add_argument(f'--user-data-dir={user_data_dir}')
                 chrome_option.add_argument(f'--profile-directory={profile_dir}')
@@ -225,6 +236,7 @@ def get_browser(headless=False, sel=False, incognito=None):
         chrome_option.add_argument('--ignore-certificate-errors')
         chrome_option.add_argument('--ignore-ssl-errors')
         chrome_option.add_argument('--ignore-certificate-errors-spki-list')
+        chrome_option.add_argument('--disable-features=DefaultPassthrough')
         prefs = {"profile.managed_default_content_settings.images": 2, "download.default_directory": download_directory}
         chrome_option.add_experimental_option("prefs", prefs)
         chrome_option.add_experimental_option("useAutomationExtension", False)
@@ -244,9 +256,13 @@ def get_browser(headless=False, sel=False, incognito=None):
                 return webdriver.Chrome(service=s, options=chrome_option)
             except Exception:
                 pass
-        if chrome_binary is None:
-            raise RuntimeError('Chrome/Chromium executable could not be resolved. Install Chrome or Chromium and set CHROME_BIN.')
-        raise
+        try:
+            temp_option = build_options(use_headless, use_incognito, force_temp_profile=True)
+            return webdriver.Chrome(service=s, options=temp_option)
+        except Exception:
+            if chrome_binary is None:
+                raise RuntimeError('Chrome/Chromium executable could not be resolved. Install Chrome or Chromium and set CHROME_BIN.')
+            raise
 
 
 def get_browser_firefox(headless=False):
