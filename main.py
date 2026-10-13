@@ -4,6 +4,12 @@ import urllib.request
 from utils import *
 from urllib.parse import urlparse
 
+SCRAPE_VERBOSE = os.getenv('SCRAPE_VERBOSE', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+def log(*args, **kwargs):
+    if SCRAPE_VERBOSE:
+        log(*args, **kwargs)
+
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -17,19 +23,19 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
             p_title = ''
             try:
                 p_title = driver.find_element(By.XPATH, '//h1[@class="product-title-name"]').text 
-                print("Title: ", p_title)
+                log("Title: ", p_title)
             except:
                 pass 
             p_sku = ''
             try:
                 p_sku = driver.find_element(By.XPATH, '//span[@class="product-title-sku-text"]').text 
-                print("SKU: ", p_sku)
+                log("SKU: ", p_sku)
             except:
                 pass 
             p_price = ''
             try:
                 p_price = driver.execute_script("""return document.querySelector('span[class="product-price-current"]').innerText;""")
-                print("Unit Price: ", p_price)
+                log("Unit Price: ", p_price)
             except:
                 pass
             p_size = ''
@@ -45,7 +51,7 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 """)
                 si.remove('EST. SHIP')
                 p_size = ' | '.join(i for i in si if len(i) > 0)
-                print(p_size)
+                log(p_size)
             except Exception as e:
                 pass  
             p_colors = ''
@@ -62,7 +68,7 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
             febric_contents = ''
             try:
                 febric_contents = driver.execute_script("return document.querySelector('div.extra-description').innerText;").replace('Fabric Contents', '').strip()
-                print(febric_contents)
+                log(febric_contents)
             except Exception as e:
                 pass
             p_images = ''
@@ -70,7 +76,7 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 elem = driver.find_element(By.XPATH, '//div[@class="pdt_img"]').find_elements(By.TAG_NAME, 'img')
                 elems = [i.get_attribute('src') for i in elem]
                 p_images = ', '.join(i.replace('large', 'original') for i in elems)
-                # print(p_images)
+                # log(p_images)
             except Exception as e:
                 pass 
             p_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
@@ -80,7 +86,7 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
 
             data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images]
             if keyword and keyword.lower() not in ' '.join(str(i) for i in data + [p_text]).lower():
-                print('Skipped (keyword not found): ', p_title)
+                log('Skipped (keyword not found): ', p_title)
                 continue
             csvWriter(data, key)
             
@@ -91,7 +97,7 @@ def get_vendor(driver):
     vendor_url_list = []
     try:
         vendors = driver.find_element(By.ID, 'item-found').find_elements(By.XPATH, './/div[@data-nclick-name="cate.list.vlink"]')
-        print('Total Vendor found: ', len(vendors))
+        log('Total Vendor found: ', len(vendors))
         if len(vendors) < 1:
             return vendor_url_list
         for vendor in vendors:
@@ -109,26 +115,26 @@ def scraper(driver, vendors, number, key, scrap_driver):
                 driver.switch_to.window(driver.window_handles[1])
                 sleep(5)
                 products_all = driver.find_element(By.XPATH, '//a[@data-nclick-name="vendor.new.viewmore"]').get_attribute('href')
-                print(products_all)
+                log(products_all)
                 driver.get(products_all)
                 items_checker = False
                 while True:
                     product_url_list = []
                     try:
                         items = driver.find_elements(By.XPATH, '//a[@data-nclick-name="vendor.new.item"]')
-                        print('Total Items: ', len(items))
+                        log('Total Items: ', len(items))
                         if len(items) < 1:
                             break
                         for item in items[::2]:
                             try:
                                 item_url = item.get_attribute('href')
-                                print(item_url)
+                                log(item_url)
                                 product_url_list.append(item_url)
                             except:
                                 pass 
                         product_details_scrap(scrap_driver, product_url_list, key)
                     except Exception as e:
-                        print(e)
+                        log(e)
                         items_checker = True
                         break
                     try:
@@ -163,13 +169,13 @@ def scraper(driver, vendors, number, key, scrap_driver):
     else:
         try:
             items = driver.find_elements(By.XPATH, '//a[@data-nclick-name="catal.list.item"]')
-            print('Total Items: ', len(items))
+            log('Total Items: ', len(items))
             for item in items:
                 item_url = item.get_attribute('href')
-                print(item_url)
+                log(item_url)
 
         except Exception as e:
-            print(e)
+            log(e)
 
 
 def login(driver):
@@ -181,13 +187,13 @@ def login(driver):
     sleep(3)
 
     if fashiongo_is_logged_in(driver):
-        print('FashionGO login successful.')
+        log('FashionGO login successful.')
     else:
         page_url = (driver.current_url or '').lower()
         if 'login' in page_url or 'signin' in page_url or 'register' in page_url:
-            print('FashionGO login did not complete; still on the login page.')
+            log('FashionGO login did not complete; still on the login page.')
         else:
-            print('FashionGO login submitted; could not confirm an authenticated session.')
+            log('FashionGO login submitted; could not confirm an authenticated session.')
 
     cookies = driver.get_cookies()
     with open(COOKIES_PATH, 'wb') as f:
@@ -205,7 +211,7 @@ def sign_in(driver):
     driver.refresh()
     sleep(3)
     if fashiongo_is_logged_in(driver):
-        print('FashionGO session already logged in.')
+        log('FashionGO session already logged in.')
     return driver
 
 
@@ -346,7 +352,7 @@ def duke_login(driver):
     sleep(3)
 
     if duke_is_logged_in(driver):
-        print('Duke session already logged in.')
+        log('Duke session already logged in.')
         return driver
 
     if not duke_email or not duke_password:
@@ -378,7 +384,7 @@ def duke_login(driver):
     sleep(4)
 
     if duke_is_logged_in(driver):
-        print('Duke login successful.')
+        log('Duke login successful.')
         return driver
 
     error_message = duke_login_error_message(driver)
@@ -399,12 +405,12 @@ def duke_login(driver):
         driver.get('https://www.dukeimports.com/')
         sleep(3)
         if duke_is_logged_in(driver):
-            print('Duke login successful.')
+            log('Duke login successful.')
             return driver
     except Exception:
         pass
 
-    print('Duke login submitted; could not confirm a logout link, continuing.')
+    log('Duke login submitted; could not confirm a logout link, continuing.')
     return driver
 
 
@@ -525,7 +531,7 @@ def duke_scrape_product_page(driver, product_url):
         if match:
             price = match.group(match.lastindex or 0).strip()
     if not price and re.search(r'(?:log\s*in|login|sign\s*in)[^\n]{0,40}(?:price|pricing)|(?:price|pricing)[^\n]{0,40}(?:log\s*in|login|sign\s*in)', body_text, re.I):
-        print('Price appears hidden behind login on this page; check your Duke credentials/session.')
+        log('Price appears hidden behind login on this page; check your Duke credentials/session.')
 
     description = ''
     for selector in ['#details_long_desc', '.details_long_desc', '[id*="long_desc"]', '.product.attribute.description .value', '.description .value', '[data-role="description"]', '.product-info-main .description', '.product.description']:
@@ -681,9 +687,9 @@ def duke_scrape_category(driver, category_url, key):
         try:
             duke_login(driver)
         except Exception as exc:
-            print(f'Duke login failed: {exc}')
-            print('Continuing without login; prices may be hidden for guest visitors.')
-        print(f'Opening category page: {category_url}')
+            log(f'Duke login failed: {exc}')
+            log('Continuing without login; prices may be hidden for guest visitors.')
+        log(f'Opening category page: {category_url}')
         driver.get(category_url)
         sleep(5)
 
@@ -692,9 +698,9 @@ def duke_scrape_category(driver, category_url, key):
         current_page_url = driver.current_url
         while True:
             product_links = duke_get_product_links(driver)
-            print(f'Page {page_number + 1}: found {len(product_links)} product link(s).')
+            log(f'Page {page_number + 1}: found {len(product_links)} product link(s).')
             if not product_links and page_number == 0:
-                print('No product links found on the category page. Check the URL or your Duke login.')
+                log('No product links found on the category page. Check the URL or your Duke login.')
             new_products = 0
             for product_url in product_links:
                 normalized_url = product_url.split('#')[0].split('?')[0]
@@ -702,18 +708,18 @@ def duke_scrape_category(driver, category_url, key):
                     continue
                 seen_products.add(normalized_url)
                 new_products += 1
-                print(f'Scraping {normalized_url}')
+                log(f'Scraping {normalized_url}')
                 try:
                     row = duke_scrape_product_page(driver, normalized_url)
                     if row:
                         csvWriter(row, key)
                     else:
-                        print('Skipped (out of stock or no product data found).')
+                        log('Skipped (out of stock or no product data found).')
                 except Exception as exc:
-                    print(f'Failed to scrape {normalized_url}: {exc}')
+                    log(f'Failed to scrape {normalized_url}: {exc}')
 
             if page_number > 0 and new_products == 0:
-                print('No new products found on this page; stopping.')
+                log('No new products found on this page; stopping.')
                 break
 
             # Scraping product pages navigated away; go back to the category
@@ -745,7 +751,7 @@ def duke_scrape_category(driver, category_url, key):
                         pass
 
             if next_page is None:
-                print('No next-page link found; finished paging.')
+                log('No next-page link found; finished paging.')
                 break
 
             try:
@@ -755,7 +761,7 @@ def duke_scrape_category(driver, category_url, key):
                 break
             current_page_url = driver.current_url
             page_number += 1
-        print(f'Duke scraping finished. Visited {len(seen_products)} product page(s). Results saved to the "{key}" CSV.')
+        log(f'Duke scraping finished. Visited {len(seen_products)} product page(s). Results saved to the "{key}" CSV.')
     finally:
         driver.implicitly_wait(10)
 
@@ -821,7 +827,7 @@ def crossroads_login(driver, base_url=None):
     sleep(5)
 
     if crossroads_is_logged_in(driver):
-        print('CrossRoads session already logged in.')
+        log('CrossRoads session already logged in.')
         crossroads_session_logged_in = True
         return driver
 
@@ -957,14 +963,14 @@ def crossroads_login(driver, base_url=None):
         pass
 
     if crossroads_is_logged_in(driver):
-        print('CrossRoads login successful.')
+        log('CrossRoads login successful.')
         crossroads_session_logged_in = True
     else:
         page_url = (driver.current_url or '').lower()
         if 'login' in page_url or 'signin' in page_url or 'join' in page_url:
-            print('CrossRoads login did not complete; still on the login page.')
+            log('CrossRoads login did not complete; still on the login page.')
         else:
-            print('CrossRoads login submitted; could not confirm an authenticated session, continuing.')
+            log('CrossRoads login submitted; could not confirm an authenticated session, continuing.')
     return driver
 
 
@@ -1080,7 +1086,7 @@ def crossroads_get_listing_prices(driver):
         # the SAME value into every tile. A real category rarely prices every
         # product identically, so treat a uniform map as unreliable.
         if len(prices) >= 3 and len(set(prices.values())) == 1:
-            print(f'Ignoring listing prices: every tile shows {next(iter(prices.values()))}, likely a shared banner.')
+            log(f'Ignoring listing prices: every tile shows {next(iter(prices.values()))}, likely a shared banner.')
             return {}
         return prices
     except Exception:
@@ -1926,11 +1932,11 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
             and 'crossroads_is_logged_in' in globals()):
         try:
             if not globals()['crossroads_is_logged_in'](driver):
-                print('CrossRoads session appears logged out; logging in before product-price scrape.')
+                log('CrossRoads session appears logged out; logging in before product-price scrape.')
                 try:
                     globals()['crossroads_login'](driver, crossroads_base_url(product_url))
                 except Exception as exc:
-                    print(f'CrossRoads pre-login failed: {exc}')
+                    log(f'CrossRoads pre-login failed: {exc}')
         except Exception:
             pass
 
@@ -2003,21 +2009,21 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     # price. Prefer the title-scoped visible price and the generic DOM sweep.
     tier_prices = get_tier_prices()
     if price and normalize_price(price) in tier_prices:
-        print(f'Listing price {price} matches a tier/qty fallback value; ignoring it.')
+        log(f'Listing price {price} matches a tier/qty fallback value; ignoring it.')
         price = ''
     try:
         main_price = (driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or '').strip()
     except Exception:
         main_price = ''
     if main_price and normalize_price(main_price) in tier_prices:
-        print(f'Main price {main_price} matches a tier/qty fallback value; ignoring it and falling back to a visible product price.')
+        log(f'Main price {main_price} matches a tier/qty fallback value; ignoring it and falling back to a visible product price.')
         main_price = ''
     if price and main_price and normalize_price(price) != normalize_price(main_price):
         # A listing price that reappears on the product page only in a
         # tier/qty context is a stale tier fallback value, not the shopper
         # price; trust the displayed main price instead.
         if normalize_price(price) in tier_prices:
-            print(f'Listing price {price} matches a tier value on the product page; using displayed price {main_price}.')
+            log(f'Listing price {price} matches a tier value on the product page; using displayed price {main_price}.')
             price = main_price
     if not price:
         price = main_price
@@ -2025,17 +2031,17 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
         price = crossroads_extract_price(driver)
     if not price and crossroads_price_hidden_by_login(body_text):
         if allow_relogin and crossroads_email and crossroads_password:
-            print('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
+            log('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
             try:
                 crossroads_login(driver, crossroads_base_url(product_url))
             except Exception as exc:
-                print(f'CrossRoads re-login failed: {exc}')
+                log(f'CrossRoads re-login failed: {exc}')
             return crossroads_scrape_product_page(driver, product_url, allow_relogin=False, listing_price=listing_price)
         if crossroads_email and crossroads_password:
-            print('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
+            log('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
         else:
-            print('Price appears hidden behind login on this page; continuing as a guest (no CrossRoads credentials configured).')
-    print(f'CrossRoads selected price for {product_url}: {price or "<empty>"}')
+            log('Price appears hidden behind login on this page; continuing as a guest (no CrossRoads credentials configured).')
+    log(f'CrossRoads selected price for {product_url}: {price or "<empty>"}')
 
     description = ''
     # The description column must contain only the value following the
@@ -2314,7 +2320,7 @@ def crossroads_scrape_quick_view(driver, index):
     try:
         opened = driver.execute_script(CROSSROADS_QUICK_VIEW_OPEN_JS, index)
     except Exception as exc:
-        print(f'Could not open quick view #{index + 1}: {exc}')
+        log(f'Could not open quick view #{index + 1}: {exc}')
         return None, ''
     if not opened:
         return None, ''
@@ -2378,16 +2384,16 @@ def crossroads_scrape_category(driver, category_url, key):
             try:
                 crossroads_login(driver, base_url)
             except Exception as exc:
-                print(f'CrossRoads login failed: {exc}')
-                print('Continuing without login; prices may be hidden for guest visitors.')
+                log(f'CrossRoads login failed: {exc}')
+                log('Continuing without login; prices may be hidden for guest visitors.')
         else:
-            print('No CrossRoads credentials configured; scraping as a guest without logging in.')
+            log('No CrossRoads credentials configured; scraping as a guest without logging in.')
 
         seen_products = set()
         page_number = 1
         while True:
             page_url = crossroads_set_page(category_url, page_number)
-            print(f'Opening category page: {page_url}')
+            log(f'Opening category page: {page_url}')
             driver.get(page_url)
             sleep(5)
 
@@ -2395,14 +2401,14 @@ def crossroads_scrape_category(driver, category_url, key):
             # modals; scrape those directly when the page offers them.
             quick_view_total = crossroads_quick_view_count(driver)
             if quick_view_total:
-                print(f'Page {page_number}: found {quick_view_total} quick view button(s).')
+                log(f'Page {page_number}: found {quick_view_total} quick view button(s).')
                 new_products = 0
                 for index in range(quick_view_total):
-                    print(f'Scraping quick view {index + 1}/{quick_view_total} on page {page_number}')
+                    log(f'Scraping quick view {index + 1}/{quick_view_total} on page {page_number}')
                     try:
                         row, dedup_key = crossroads_scrape_quick_view(driver, index)
                     except Exception as exc:
-                        print(f'Failed to scrape quick view #{index + 1}: {exc}')
+                        log(f'Failed to scrape quick view #{index + 1}: {exc}')
                         continue
                     if dedup_key and dedup_key in seen_products:
                         continue
@@ -2410,22 +2416,22 @@ def crossroads_scrape_category(driver, category_url, key):
                         seen_products.add(dedup_key)
                     if row:
                         new_products += 1
-                        print(f'CrossRoads quick view scraped: {row[0] or row[1] or "<unnamed>"} (price: {row[2] or "<empty>"})')
+                        log(f'CrossRoads quick view scraped: {row[0] or row[1] or "<unnamed>"} (price: {row[2] or "<empty>"})')
                         csvWriter(row, key)
                     else:
-                        print('Skipped (no product data found in quick view).')
+                        log('Skipped (no product data found in quick view).')
                 if new_products == 0:
-                    print('No new products found on this page; stopping.')
+                    log('No new products found on this page; stopping.')
                     break
                 page_number += 1
                 continue
 
             product_links = crossroads_get_product_links(driver, allowed_host)
             listing_prices = crossroads_get_listing_prices(driver)
-            print(f'Page {page_number}: found {len(product_links)} product link(s).')
+            log(f'Page {page_number}: found {len(product_links)} product link(s).')
             if not product_links:
                 if page_number == 1:
-                    print('No product links found on the category page. Check the URL or your CrossRoads login.')
+                    log('No product links found on the category page. Check the URL or your CrossRoads login.')
                 break
 
             new_products = 0
@@ -2435,24 +2441,24 @@ def crossroads_scrape_category(driver, category_url, key):
                     continue
                 seen_products.add(normalized_url)
                 new_products += 1
-                print(f'Scraping {normalized_url}')
+                log(f'Scraping {normalized_url}')
                 listing_price = listing_prices.get(normalized_url) or listing_prices.get(product_url, '')
                 if listing_price:
-                    print(f'Using listing price from category page: {listing_price}')
+                    log(f'Using listing price from category page: {listing_price}')
                 try:
                     row = crossroads_scrape_product_page(driver, normalized_url, listing_price=listing_price)
                     if row:
                         csvWriter(row, key)
                     else:
-                        print('Skipped (no product data found).')
+                        log('Skipped (no product data found).')
                 except Exception as exc:
-                    print(f'Failed to scrape {normalized_url}: {exc}')
+                    log(f'Failed to scrape {normalized_url}: {exc}')
 
             if new_products == 0:
-                print('No new products found on this page; stopping.')
+                log('No new products found on this page; stopping.')
                 break
             page_number += 1
-        print(f'CrossRoads scraping finished. Visited {len(seen_products)} product page(s). Results saved to the "{key}" CSV.')
+        log(f'CrossRoads scraping finished. Visited {len(seen_products)} product page(s). Results saved to the "{key}" CSV.')
     finally:
         driver.implicitly_wait(10)
 
@@ -2467,7 +2473,7 @@ def main(driver, number, scrap_driver):
                 cat_link = cat.get_attribute('href')
                 m_cat_list[cat_name] = cat_link
             for index, item in enumerate(m_cat_list.keys()):
-                print(index, '-> ', item) 
+                log(index, '-> ', item) 
             
             select_cat = int(input('Select A Category\n'))
             key = list(m_cat_list.keys())[select_cat]
@@ -2503,7 +2509,7 @@ def main(driver, number, scrap_driver):
                 s_cat_list[cat_name] = cat_link
 
             for index, item in enumerate(s_cat_list.keys()):
-                print(index, '-> ', item)  
+                log(index, '-> ', item)  
 
               
             select_cat = int(input('Select A Catalog\n'))
@@ -2540,19 +2546,19 @@ def main(driver, number, scrap_driver):
             try:
                 driver.get(v_link)
                 products_all = driver.find_element(By.XPATH, '//a[@data-nclick-name="vendor.menu.allitems"]').get_attribute('href')
-                print(products_all)
+                log(products_all)
                 driver.get(products_all)
                 while True:
                     product_url_list = []
                     try:
                         items = driver.find_elements(By.XPATH, '//a[@data-nclick-name="vendor.allitems.item"]')
-                        print('Total Items: ', len(items))
+                        log('Total Items: ', len(items))
                         if len(items) < 1:
                             break
                         for item in items[::2]:
                             try:
                                 item_url = item.get_attribute('href')
-                                print(item_url)
+                                log(item_url)
                                 product_url_list.append(item_url)
                             except:
                                 pass 
@@ -2603,12 +2609,12 @@ def main(driver, number, scrap_driver):
                 #     except Exception as e:
                 #         pass
             except Exception as e:
-                print(e)
+                log(e)
 
         if number == 4:
             duke_url = input('Duke Imports category URL: ').strip()
             if not duke_url:
-                print('No Duke URL provided.')
+                log('No Duke URL provided.')
                 return
             key = input('CSV name (leave blank to use category name): ').strip() or 'dukeimports'
             csvMaker(key)
@@ -2617,7 +2623,7 @@ def main(driver, number, scrap_driver):
         if number == 5:
             crossroads_url = input('CrossRoads category URL: ').strip()
             if not crossroads_url:
-                print('No CrossRoads URL provided.')
+                log('No CrossRoads URL provided.')
                 return
             key = input('CSV name (leave blank to use "crossroads"): ').strip()
             if not key:
@@ -2627,7 +2633,7 @@ def main(driver, number, scrap_driver):
             crossroads_scrape_category(driver, crossroads_url, key)
 
     except Exception as e:
-        print(f'Scraping failed: {e}')
+        log(f'Scraping failed: {e}')
 
 
 if __name__ == '__main__':
@@ -2650,11 +2656,11 @@ if __name__ == '__main__':
         try:
             choice = input(menu).strip()
         except EOFError:
-            print('No menu selection received; exiting.')
+            log('No menu selection received; exiting.')
             sys.exit(1)
         if choice.isdigit() and 1 <= int(choice) <= 5:
             number = int(choice)
         else:
-            print(f'Invalid selection {choice!r}. Please enter a number from 1 to 5.')
+            log(f'Invalid selection {choice!r}. Please enter a number from 1 to 5.')
     main(driver, number, scrap_driver)
     # product_details_scrap(driver, ['https://www.fashiongo.net/Item/21638783?paKey=202405152c85431acbb0b1e8a2aaeeed7b29cb38&listkey=097a92c8-fcdf-4bb4-bbcc-cdf71b3ed01b'], 'test')
