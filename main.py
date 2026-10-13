@@ -35,6 +35,26 @@ def fashiongo_filter_details(text):
         kept.append(line)
     return '\n'.join(kept)
 
+
+def normalize_keyword(keyword):
+    """Return a normalized keyword or None when no filter is requested."""
+    if keyword is None:
+        return None
+    keyword = str(keyword).strip()
+    return keyword.casefold() if keyword else None
+
+
+def entry_matches_keyword(keyword, *values):
+    """Case-insensitive substring match across the product payload."""
+    keyword = normalize_keyword(keyword)
+    if not keyword:
+        return True
+    haystack = ' '.join(
+        str(value).casefold() for value in values if value is not None and str(value).strip()
+    )
+    return keyword in haystack
+
+
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -201,7 +221,7 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 p_price = fixed_price
 
             data = [p_title, p_sku, p_price, p_size, p_colors, p_details, febric_contents, p_images]
-            if keyword and keyword.lower() not in ' '.join(str(i) for i in data + [p_text]).lower():
+            if not entry_matches_keyword(keyword, *data, p_text):
                 log('Skipped (keyword not found): ', p_title)
                 continue
             csvWriter(data, key)
@@ -2763,9 +2783,8 @@ def main(driver, number, scrap_driver):
             fixed_price = input('Enter a price to set for all items (leave empty to keep original prices): ').strip()
             if not fixed_price:
                 fixed_price = None
-            keyword = input('Enter a word to keep only entries containing it (leave empty to keep all): ').strip()
-            if not keyword:
-                keyword = None
+            keyword = input('Enter a word to keep only entries containing it (leave empty to keep all): ')
+            keyword = normalize_keyword(keyword)
             csvMaker(key)
             try:
                 fashiongo_scrape_url(driver, fg_url, key, scrap_driver, fixed_price, keyword)
