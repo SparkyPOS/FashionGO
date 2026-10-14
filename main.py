@@ -44,23 +44,6 @@ def normalize_keyword(keyword):
     return keyword.casefold() if keyword else None
 
 
-def normalize_scrape_key(value):
-    """Canonicalize URLs and text so repeated product rows collapse to one key."""
-    if value is None:
-        return ''
-    text = str(value).strip()
-    if not text:
-        return ''
-    try:
-        text = text.split('#', 1)[0]
-        parsed = urlparse(text)
-        if parsed.scheme and parsed.netloc:
-            text = f'{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path.rstrip("/")}'
-    except Exception:
-        pass
-    return re.sub(r'\s+', '', text).casefold()
-
-
 def entry_matches_keyword(keyword, *values):
     """Case-insensitive substring match across the product payload."""
     keyword = normalize_keyword(keyword)
@@ -78,8 +61,31 @@ if not os.path.exists(DATA_DIR):
 clicker = "arguments[0].click();"
 
 
+def normalize_fashiongo_url(value):
+    """Canonicalize FashionGO product URLs so repeated links collapse to one item."""
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if not text:
+        return ''
+    text = text.split('#', 1)[0]
+    try:
+        parsed = urlparse(text)
+        if parsed.scheme and parsed.netloc:
+            return f'{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path.rstrip("/")}'.casefold()
+    except Exception:
+        pass
+    return text.rstrip('/').casefold()
+
+
 def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
+    seen_products = set()
     for url in urls:
+        product_key = normalize_fashiongo_url(url)
+        if product_key and product_key in seen_products:
+            continue
+        if product_key:
+            seen_products.add(product_key)
         try:
             driver.get(url)
             p_title = ''
@@ -474,9 +480,10 @@ def fashiongo_scrape_url(driver, url, key, scrap_driver, fixed_price=None, keywo
                     info('It looks like the session is NOT logged in to FashionGO. '
                          'Run Login.bat (or loginscript.py) to refresh cookies.pkl and try again.')
             for item_url in links:
-                if item_url in seen_urls:
+                normalized_url = normalize_fashiongo_url(item_url)
+                if normalized_url in seen_urls:
                     continue
-                seen_urls.add(item_url)
+                seen_urls.add(normalized_url)
                 log(item_url)
                 product_url_list.append(item_url)
         except Exception as e:
@@ -2249,7 +2256,7 @@ def crossroads_sort_images_by_file_size(driver, urls):
 
 
 def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, listing_price=''):
-    logger = globals().get('log')
+    logger = globals().get('log', lambda *args, **kwargs: None)
     # Skip the per-product DOM login check once this session has a confirmed
     # login: product pages often lack logout/account markers, so the check
     # false-negatives and needlessly re-runs the login flow for every product.
@@ -2257,13 +2264,11 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
             and 'crossroads_is_logged_in' in globals()):
         try:
             if not globals()['crossroads_is_logged_in'](driver):
-                if logger:
-                    logger('CrossRoads session appears logged out; logging in before product-price scrape.')
+                logger('CrossRoads session appears logged out; logging in before product-price scrape.')
                 try:
                     globals()['crossroads_login'](driver, crossroads_base_url(product_url))
                 except Exception as exc:
-                    if logger:
-                        logger(f'CrossRoads pre-login failed: {exc}')
+                    logger(f'CrossRoads pre-login failed: {exc}')
         except Exception:
             pass
 
@@ -2336,24 +2341,21 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
     # price. Prefer the title-scoped visible price and the generic DOM sweep.
     tier_prices = get_tier_prices()
     if price and normalize_price(price) in tier_prices:
-        if logger:
-            logger(f'Listing price {price} matches a tier/qty fallback value; ignoring it.')
+        logger(f'Listing price {price} matches a tier/qty fallback value; ignoring it.')
         price = ''
     try:
         main_price = (driver.execute_script(CROSSROADS_MAIN_PRICE_JS) or '').strip()
     except Exception:
         main_price = ''
     if main_price and normalize_price(main_price) in tier_prices:
-        if logger:
-            logger(f'Main price {main_price} matches a tier/qty fallback value; ignoring it and falling back to a visible product price.')
+        logger(f'Main price {main_price} matches a tier/qty fallback value; ignoring it and falling back to a visible product price.')
         main_price = ''
     if price and main_price and normalize_price(price) != normalize_price(main_price):
         # A listing price that reappears on the product page only in a
         # tier/qty context is a stale tier fallback value, not the shopper
         # price; trust the displayed main price instead.
         if normalize_price(price) in tier_prices:
-            if logger:
-                logger(f'Listing price {price} matches a tier value on the product page; using displayed price {main_price}.')
+            logger(f'Listing price {price} matches a tier value on the product page; using displayed price {main_price}.')
             price = main_price
     if not price:
         price = main_price
@@ -2361,22 +2363,17 @@ def crossroads_scrape_product_page(driver, product_url, allow_relogin=True, list
         price = crossroads_extract_price(driver)
     if not price and crossroads_price_hidden_by_login(body_text):
         if allow_relogin and crossroads_email and crossroads_password:
-            if logger:
-                logger('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
+            logger('Price appears hidden behind login; re-logging into CrossRoads and retrying this product.')
             try:
                 crossroads_login(driver, crossroads_base_url(product_url))
             except Exception as exc:
-                if logger:
-                    logger(f'CrossRoads re-login failed: {exc}')
+                logger(f'CrossRoads re-login failed: {exc}')
             return crossroads_scrape_product_page(driver, product_url, allow_relogin=False, listing_price=listing_price)
         if crossroads_email and crossroads_password:
-            if logger:
-                logger('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
+            logger('Price appears hidden behind login on this page; check your CrossRoads credentials/session.')
         else:
-            if logger:
-                logger('Price appears hidden behind login on this page; continuing as a guest (no CrossRoads credentials configured).')
-    if logger:
-        logger(f'CrossRoads selected price for {product_url}: {price or "<empty>"}')
+            logger('Price appears hidden behind login on this page; continuing as a guest (no CrossRoads credentials configured).')
+    logger(f'CrossRoads selected price for {product_url}: {price or "<empty>"}')
 
     description = ''
     # The description column must contain only the value following the
@@ -2725,15 +2722,9 @@ def crossroads_scrape_category(driver, category_url, key):
             log('No CrossRoads credentials configured; scraping as a guest without logging in.')
 
         seen_products = set()
-        seen_pages = set()
         page_number = 1
         while True:
             page_url = crossroads_set_page(category_url, page_number)
-            normalized_page = normalize_scrape_key(page_url)
-            if normalized_page in seen_pages:
-                log(f'Page repeated; stopping pagination loop to avoid endless scraping: {page_url}')
-                break
-            seen_pages.add(normalized_page)
             log(f'Opening category page: {page_url}')
             driver.get(page_url)
             sleep(5)
@@ -2751,7 +2742,6 @@ def crossroads_scrape_category(driver, category_url, key):
                     except Exception as exc:
                         log(f'Failed to scrape quick view #{index + 1}: {exc}')
                         continue
-                    dedup_key = normalize_scrape_key(dedup_key or (row[1] if row and len(row) > 1 else row[0] if row else ''))
                     if dedup_key and dedup_key in seen_products:
                         continue
                     if dedup_key:
@@ -2778,23 +2768,23 @@ def crossroads_scrape_category(driver, category_url, key):
 
             new_products = 0
             for product_url in product_links:
-                normalized_url = normalize_scrape_key(product_url)
+                normalized_url = product_url.split('#')[0]
                 if normalized_url in seen_products:
                     continue
                 seen_products.add(normalized_url)
                 new_products += 1
-                log(f'Scraping {product_url}')
-                listing_price = listing_prices.get(product_url) or listing_prices.get(product_url.split('#')[0], '')
+                log(f'Scraping {normalized_url}')
+                listing_price = listing_prices.get(normalized_url) or listing_prices.get(product_url, '')
                 if listing_price:
                     log(f'Using listing price from category page: {listing_price}')
                 try:
-                    row = crossroads_scrape_product_page(driver, product_url, listing_price=listing_price)
+                    row = crossroads_scrape_product_page(driver, normalized_url, listing_price=listing_price)
                     if row:
                         csvWriter(row, key)
                     else:
                         log('Skipped (no product data found).')
                 except Exception as exc:
-                    log(f'Failed to scrape {product_url}: {exc}')
+                    log(f'Failed to scrape {normalized_url}: {exc}')
 
             if new_products == 0:
                 log('No new products found on this page; stopping.')
