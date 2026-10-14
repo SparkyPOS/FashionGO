@@ -187,7 +187,7 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 pass  
             p_colors = ''
             try:
-                colors = driver.execute_script("""
+                colors = driver.execute_script(r"""
                     const texts = [];
                     const seen = new Set();
                     const BAD = /\b(?:in\s+stock|out\s+of\s+stock|sold\s+out|available|unavailable|stock|qty|quantity|size|style|pack|total|price|shipping|select\s+color|color\s+swatch)\b/i;
