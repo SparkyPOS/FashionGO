@@ -89,6 +89,8 @@ def normalize_color_value(value):
     text = text.strip(' :;,-|/\\')
     if not text or len(text) > 60:
         return ''
+    if re.fullmatch(r'fg', text, flags=re.I):
+        return ''
     if re.fullmatch(r'[\d\s:;|/,.-]+', text):
         return ''
     if re.search(r'\b(?:in\s+stock|out\s+of\s+stock|sold\s+out|available|unavailable|stock|qty|quantity|size|style|pack|total|price|shipping|backorder|preorder|select\s+color|color\s+swatch)\b', text, re.I):
