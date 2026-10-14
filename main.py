@@ -78,6 +78,24 @@ def normalize_fashiongo_url(value):
     return text.rstrip('/').casefold()
 
 
+def normalize_color_value(value):
+    """Keep only actual color names and drop stock/status copy around them."""
+    if value is None:
+        return ''
+    text = re.sub(r'\s+', ' ', str(value)).strip()
+    if not text:
+        return ''
+    text = re.sub(r'^(?:color|colour)\s*[:\-]?\s*', '', text, flags=re.I)
+    text = text.strip(' :;,-|/\\')
+    if not text or len(text) > 60:
+        return ''
+    if re.fullmatch(r'[\d\s:;|/,.-]+', text):
+        return ''
+    if re.search(r'\b(?:in\s+stock|out\s+of\s+stock|sold\s+out|available|unavailable|stock|qty|quantity|size|style|pack|total|price|shipping|backorder|preorder|select\s+color|color\s+swatch)\b', text, re.I):
+        return ''
+    return text
+
+
 def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
     seen_products = set()
     for url in urls:
@@ -169,29 +187,59 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
                 pass  
             p_colors = ''
             try:
-                colors = driver.execute_script("""
+                colors = driver.execute_script(r"""
                     const texts = [];
                     const seen = new Set();
-                    const push = (t) => {
-                        t = (t || '').trim();
-                        if (!t) return;
+                    const BAD = /\b(?:in\s+stock|out\s+of\s+stock|sold\s+out|available|unavailable|stock|qty|quantity|size|style|pack|total|price|shipping|select\s+color|color\s+swatch)\b/i;
+                    const looksLikeColor = (t) => {
+                        if (!t) return false;
+                        t = t.trim();
+                        if (!t || t.length > 60) return false;
+                        if (/^\d[\d\s:;|/\\.,-]*$/.test(t)) return false;
+                        if (BAD.test(t)) return false;
+                        return /[a-z]/i.test(t) && !/\b(?:stock|size|style|qty|price|shipping|color|pack|total)\b/i.test(t);
+                    };
+                    const push = (raw) => {
+                        const t = (raw || '').trim();
+                        if (!looksLikeColor(t)) return;
                         const key = t.toUpperCase();
                         if (seen.has(key)) return;
                         seen.add(key);
                         texts.push(t);
                     };
-                    document.querySelectorAll('tbody span.span_item_colorname').forEach(el => push(el.textContent));
-                    if (!texts.length) {
-                        document.querySelectorAll('span[class*="colorname"], [class*="color-name"], [class*="color_name"], [data-color-name]').forEach(el => {
-                            push(el.getAttribute('data-color-name') || el.textContent);
+                    const collect = (root) => {
+                        if (!root || !root.querySelectorAll) return;
+                        root.querySelectorAll('span, div, li, a, strong, b, label, td, p').forEach(el => {
+                            const text = (el.textContent || '').trim();
+                            if (!text) return;
+                            const cls = ((el.className || '').toString() + ' ' + (el.id || '')).toLowerCase();
+                            if (!/(?:color|colour|swatch|variant|shade)/i.test(cls) && !/color/i.test(text)) return;
+                            if (!/color/i.test(text) && !/(?:color|colour|swatch|variant|shade)/i.test(cls)) return;
+                            const value = text.replace(/\s*[:\-]\s*$/, '').trim();
+                            push(value);
                         });
-                    }
-                    if (!texts.length) {
-                        document.querySelectorAll('[class*="color"] img[alt], img[class*="color"][alt]').forEach(el => push(el.getAttribute('alt')));
-                    }
+                    };
+                    collect(document);
+                    document.querySelectorAll('tbody span.span_item_colorname').forEach(el => push(el.textContent));
+                    document.querySelectorAll('span[class*="colorname"], [class*="color-name"], [class*="color_name"], [data-color-name]').forEach(el => {
+                        push(el.getAttribute('data-color-name') || el.textContent);
+                    });
+                    document.querySelectorAll('[class*="swatch"], [data-color], [data-color-name], [class*="variant"], [class*="shade"]').forEach(el => {
+                        const text = (el.textContent || '').trim();
+                        const attr = (el.getAttribute('data-color-name') || el.getAttribute('data-color') || '').trim();
+                        push(attr || text);
+                        if (el.querySelector('img[alt]')) {
+                            el.querySelectorAll('img[alt]').forEach(img => push(img.getAttribute('alt')));
+                        }
+                    });
+                    document.querySelectorAll('[class*="color"] img[alt], img[class*="color"][alt], [class*="colour"] img[alt], img[class*="colour"][alt]').forEach(el => push(el.getAttribute('alt')));
                     return texts;
                 """) or []
-                p_colors = '|'.join(i.strip() for i in colors if i and i.strip())
+                p_colors = '|'.join(
+                    normalize_color_value(i)
+                    for i in colors
+                    if normalize_color_value(i)
+                )
                 log("Colors: ", p_colors)
             except Exception as e:
                 pass
