@@ -106,6 +106,10 @@ def product_details_scrap(driver, urls, key, fixed_price=None, keyword=None):
             continue
         if product_key:
             seen_products.add(product_key)
+        normalized_lower = product_key.lower()
+        if '/vendors/' in normalized_lower and '/list/' in normalized_lower:
+            log(f'Skipping vendor list URL: {url}')
+            continue
         try:
             driver.get(url)
             p_title = ''
