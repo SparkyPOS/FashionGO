@@ -2849,6 +2849,347 @@ def crossroads_scrape_category(driver, category_url, key):
         driver.implicitly_wait(10)
 
 
+def fivebelow_product_in_stock(page_text):
+    """Return True when the page clearly indicates at least one available variant."""
+    if not page_text:
+        return True
+    text = page_text.lower()
+    if re.search(r'\b(?:sold\s+out|out\s+of\s+stock|unavailable|not\s+available|notify\s+me|coming\s+soon|backorder|preorder)\b', text):
+        return False
+    return True
+
+
+def fivebelow_extract_price(value):
+    if not value:
+        return ''
+    text = str(value)
+    match = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', text)
+    if match:
+        return match.group(0).strip()
+    match = re.search(r'\d[\d,]*(?:\.\d+)?', text)
+    if match:
+        return '$' + match.group(0).strip()
+    return ''
+
+
+def fivebelow_collect_variant_options(raw_data):
+    """Return {sizes:[...], colors:[...], styles:[...]} from JSON-ish product metadata."""
+    sizes, colors, styles = [], [], []
+
+    def add_unique(target, value):
+        clean = str(value).strip()
+        if not clean:
+            return
+        if clean.lower() in {'null', 'none'}:
+            return
+        if clean not in target:
+            target.append(clean)
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                lower = str(key).lower()
+                if lower in {'size', 'sizes', 'size_name', 'size_name_value'}:
+                    if isinstance(value, (list, tuple, set)):
+                        for item in value:
+                            if isinstance(item, dict):
+                                for nested_key in ['label', 'name', 'value', 'size']:
+                                    if nested_key in item:
+                                        add_unique(sizes, item[nested_key])
+                            else:
+                                add_unique(sizes, item)
+                    elif isinstance(value, str):
+                        add_unique(sizes, value)
+                elif lower in {'color', 'colors', 'colour', 'colour_name', 'color_name'}:
+                    if isinstance(value, (list, tuple, set)):
+                        for item in value:
+                            if isinstance(item, dict):
+                                for nested_key in ['label', 'name', 'value', 'color', 'colour']:
+                                    if nested_key in item:
+                                        add_unique(colors, item[nested_key])
+                            else:
+                                add_unique(colors, item)
+                    elif isinstance(value, str):
+                        add_unique(colors, value)
+                elif lower in {'style', 'styles'}:
+                    if isinstance(value, (list, tuple, set)):
+                        for item in value:
+                            if isinstance(item, dict):
+                                for nested_key in ['label', 'name', 'value', 'style']:
+                                    if nested_key in item:
+                                        add_unique(styles, item[nested_key])
+                            else:
+                                add_unique(styles, item)
+                    elif isinstance(value, str):
+                        add_unique(styles, value)
+                walk(value)
+            if 'sizes' in node and isinstance(node.get('sizes'), (list, tuple, set)):
+                for value in node['sizes']:
+                    add_unique(sizes, value)
+            if 'colors' in node and isinstance(node.get('colors'), (list, tuple, set)):
+                for value in node['colors']:
+                    add_unique(colors, value)
+            if 'styles' in node and isinstance(node.get('styles'), (list, tuple, set)):
+                for value in node['styles']:
+                    add_unique(styles, value)
+        elif isinstance(node, (list, tuple, set)):
+            for item in node:
+                walk(item)
+
+    walk(raw_data)
+    return {'sizes': sizes, 'colors': colors, 'styles': styles}
+
+
+def fivebelow_extract_product_json(driver):
+    """Best-effort JSON from product pages: Next.js payloads and window globals."""
+    scripts = []
+    try:
+        scripts = driver.execute_script(r"""
+            const found = [];
+            const seen = new Set();
+            const gather = (text) => {
+                if (!text || seen.has(text)) return;
+                seen.add(text);
+                found.push(text);
+            };
+            for (const tag of document.querySelectorAll('script')) {
+                const text = tag.textContent || '';
+                if (text.includes('__NEXT_DATA__') || text.includes('product') || text.includes('price') || text.includes('variants')) {
+                    gather(text);
+                }
+            }
+            for (const key of Object.keys(window)) {
+                const value = window[key];
+                if (value && typeof value === 'object') {
+                    try { const json = JSON.stringify(value); if (/product|variant|price|color|size|style/i.test(json)) gather(json); }
+                    catch (e) {}
+                }
+            }
+            return found;
+        """) or []
+    except Exception:
+        scripts = []
+    payloads = []
+    for script in scripts:
+        if not script:
+            continue
+        text = str(script)
+        if '__NEXT_DATA__' in text:
+            match = re.search(r'__NEXT_DATA__\s*=\s*(\{.*?\})\s*;</script>', text, re.S)
+            if match:
+                payloads.append(match.group(1))
+                continue
+            match = re.search(r'__NEXT_DATA__\s*=\s*(\{.*\})', text, re.S)
+            if match:
+                payloads.append(match.group(1))
+                continue
+        if '{' in text and ('product' in text.lower() or 'variant' in text.lower() or 'price' in text.lower()):
+            payloads.append(text)
+    parsed = []
+    for payload in payloads:
+        try:
+            parsed.append(json.loads(payload))
+        except Exception:
+            try:
+                cleaned = payload.replace('\\x', '\\u00')
+                parsed.append(json.loads(cleaned))
+            except Exception:
+                pass
+    return parsed
+
+
+def fivebelow_scrape_product_page(driver, product_url):
+    driver.get(product_url)
+    sleep(3)
+    body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
+    lower_text = body_text.lower()
+    if fivebelow_product_in_stock(lower_text) is False:
+        return None
+
+    title = ''
+    for selector in ['h1', '[data-testid="product-title"]', '.product-title', '[class*="product-title"]', '[itemprop="name"]', 'h1.product-name']:
+        try:
+            candidate = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+            if candidate:
+                title = candidate
+                break
+        except Exception:
+            pass
+
+    description = ''
+    for selector in ['meta[name="description"]', '[data-testid="description"]', '.product-description', '[itemprop="description"]', '.description']:
+        try:
+            if selector.startswith('meta'):
+                value = driver.execute_script("return document.querySelector(arguments[0]) && document.querySelector(arguments[0]).getAttribute('content');", selector)
+            else:
+                value = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+            if value:
+                description = re.sub(r'\s+', ' ', value).strip()
+                break
+        except Exception:
+            pass
+    if not description:
+        description = re.sub(r'\s+', ' ', body_text[:2000]).strip()
+
+    price = ''
+    for selector in ['meta[itemprop="price"]', '[itemprop="price"]', '.price', '.product-price', '[data-price]']:
+        try:
+            if selector.startswith('meta'):
+                value = driver.execute_script("return document.querySelector(arguments[0]) && document.querySelector(arguments[0]).getAttribute('content');", selector)
+            else:
+                value = driver.find_element(By.CSS_SELECTOR, selector).text.strip()
+            price = fivebelow_extract_price(value)
+            if price:
+                break
+        except Exception:
+            pass
+    if not price:
+        price = fivebelow_extract_price(body_text)
+
+    images = []
+    try:
+        image_data = driver.execute_script(r'''
+            const seen = new Set();
+            const push = (src) => {
+                if (!src || src.startsWith('data:')) return;
+                try { src = new URL(src, document.baseURI).href; } catch (e) { return; }
+                if (!/\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i.test(src)) return;
+                if (!seen.has(src)) { seen.add(src); return src; }
+                return null;
+            };
+            const urls = [];
+            document.querySelectorAll('img').forEach(img => {
+                const src = push(img.getAttribute('data-zoom-image') || img.getAttribute('data-original') || img.getAttribute('data-src') || img.getAttribute('src'));
+                if (src) urls.push(src);
+            });
+            return urls.slice(0, 12);
+        ''') or []
+        images = [img for img in (image_data or []) if img]
+    except Exception:
+        images = []
+
+    size_values = []
+    color_values = []
+    style_values = []
+    for payload in fivebelow_extract_product_json(driver):
+        options = fivebelow_collect_variant_options(payload)
+        size_values.extend(options.get('sizes', []))
+        color_values.extend(options.get('colors', []))
+        style_values.extend(options.get('styles', []))
+
+    def unique(values):
+        out = []
+        seen = set()
+        for item in values:
+            clean = re.sub(r'\s+', ' ', str(item)).strip()
+            if not clean or clean.lower() in {'none', 'null'}:
+                continue
+            key = clean.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(clean)
+        return out
+
+    sizes = '|'.join(unique(size_values))
+    colors = '|'.join(unique(color_values))
+    if not colors and style_values:
+        colors = '|'.join(unique(style_values))
+
+    if not title and not price and not description:
+        return None
+
+    row = [title, '', price, sizes, colors, description, '', ', '.join(images)]
+    if row[0] or row[2] or row[5] or row[7]:
+        return row
+    return None
+
+
+def fivebelow_get_product_links(driver):
+    try:
+        hrefs = driver.execute_script(r'''
+            const seen = new Set();
+            const out = [];
+            const add = href => {
+                if (!href) return;
+                try { href = new URL(href, document.baseURI).href; } catch (e) { return; }
+                const lower = href.toLowerCase();
+                if (/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(lower)) return;
+                if (lower.includes('/product/') || lower.includes('/products/') || lower.includes('/shop/') || lower.includes('/item/') || /[?&](?:product|item|p)id=/i.test(lower)) {
+                    if (!seen.has(href)) { seen.add(href); out.push(href); }
+                }
+            };
+            document.querySelectorAll('a[href]').forEach(a => add(a.getAttribute('href')));
+            if (!out.length) {
+                for (const key of Object.keys(window)) {
+                    const value = window[key];
+                    if (value && typeof value === 'string' && /fivebelow\.com\/.*(?:product|item|shop)\//i.test(value)) {
+                        add(value);
+                    }
+                }
+            }
+            return out.slice(0, 200);
+        ''') or []
+    except Exception:
+        hrefs = []
+
+    normalized = []
+    seen = set()
+    for href in hrefs:
+        clean = href.split('#')[0]
+        if clean in seen:
+            continue
+        seen.add(clean)
+        normalized.append(clean)
+    return normalized
+
+
+def fivebelow_scrape_category(driver, category_url, key):
+    driver.get(category_url)
+    sleep(5)
+    seen = set()
+    page_number = 1
+    while True:
+        product_links = fivebelow_get_product_links(driver)
+        log(f'FiveBelow page {page_number}: found {len(product_links)} product link(s).')
+        for product_url in product_links:
+            normalized = product_url.split('#')[0]
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            try:
+                row = fivebelow_scrape_product_page(driver, normalized)
+                if row:
+                    csvWriter(row, key)
+                    log(f'Saved FiveBelow item: {row[0] or row[2] or normalized}')
+            except Exception as exc:
+                log(f'Failed to scrape FiveBelow item {normalized}: {exc}')
+        if not product_links:
+            log('No product links found on the FiveBelow category page.')
+            break
+        try:
+            next_button = driver.execute_script(r'''
+                const selectors = ['a[rel="next"]', '.next', '.pagination-next', 'a.next', 'button.next', '[aria-label*="Next" i]'];
+                for (const selector of selectors) {
+                    const items = document.querySelectorAll(selector);
+                    for (const el of items) {
+                        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+                        const visible = !style || (style.display !== 'none' && style.visibility !== 'hidden');
+                        const text = (el.textContent || '').trim();
+                        if (visible && (text.toLowerCase().includes('next') || !text)) return el;
+                    }
+                }
+                return null;
+            ''')
+            if next_button is None:
+                break
+            driver.execute_script(clicker, next_button)
+            sleep(4)
+            page_number += 1
+        except Exception:
+            break
+
+
 def main(driver, number, scrap_driver):
     try:
         if number == 1:
@@ -2892,6 +3233,15 @@ def main(driver, number, scrap_driver):
             csvMaker(key)
             crossroads_scrape_category(driver, crossroads_url, key)
 
+        if number == 4:
+            fivebelow_url = input('FiveBelow category URL: ').strip()
+            if not fivebelow_url:
+                log('No FiveBelow URL provided.')
+                return
+            key = input('CSV name (leave blank to use "fivebelow"): ').strip() or 'fivebelow'
+            csvMaker(key)
+            fivebelow_scrape_category(driver, fivebelow_url, key)
+
     except Exception as e:
         log(f'Scraping failed: {e}')
 
@@ -2908,6 +3258,7 @@ if __name__ == '__main__':
     1. -> Scrap FashionGO URL
     2. -> Scrap Duke Imports category URL
     3. -> Scrap CrossRoads category URL
+    4. -> Scrap FiveBelow category URL
     """
     number = None
     while number is None:
@@ -2916,9 +3267,9 @@ if __name__ == '__main__':
         except EOFError:
             log('No menu selection received; exiting.')
             sys.exit(1)
-        if choice.isdigit() and 1 <= int(choice) <= 3:
+        if choice.isdigit() and 1 <= int(choice) <= 4:
             number = int(choice)
         else:
-            log(f'Invalid selection {choice!r}. Please enter a number from 1 to 3.')
+            log(f'Invalid selection {choice!r}. Please enter a number from 1 to 4.')
     main(driver, number, scrap_driver)
     # product_details_scrap(driver, ['https://www.fashiongo.net/Item/21638783?paKey=202405152c85431acbb0b1e8a2aaeeed7b29cb38&listkey=097a92c8-fcdf-4bb4-bbcc-cdf71b3ed01b'], 'test')
