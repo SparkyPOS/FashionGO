@@ -3291,6 +3291,7 @@ def fivebelow_get_product_links(driver):
 
 
 def fivebelow_scrape_category(driver, category_url, key):
+    info(f'Opening FiveBelow category: {category_url}')
     driver.get(category_url)
     sleep(5)
     seen = set()
@@ -3303,7 +3304,7 @@ def fivebelow_scrape_category(driver, category_url, key):
             except Exception:
                 break
         product_links = fivebelow_get_product_links(driver)
-        log(f'FiveBelow page {page_number}: found {len(product_links)} product link(s).')
+        info(f'FiveBelow page {page_number}: found {len(product_links)} product link(s).')
         for product_url in product_links:
             normalized = product_url.split('#')[0]
             if normalized in seen:
@@ -3313,11 +3314,11 @@ def fivebelow_scrape_category(driver, category_url, key):
                 row = fivebelow_scrape_product_page(driver, normalized)
                 if row:
                     csvWriter(row, key)
-                    log(f'Saved FiveBelow item: {row[0] or row[2] or normalized}')
+                    info(f'Saved FiveBelow item: {row[0] or row[2] or normalized}')
             except Exception as exc:
-                log(f'Failed to scrape FiveBelow item {normalized}: {exc}')
+                info(f'Failed to scrape FiveBelow item {normalized}: {exc}')
         if not product_links:
-            log('No product links found on the FiveBelow category page.')
+            info('No product links found on the FiveBelow category page.')
             break
         try:
             next_button = driver.execute_script(r'''
@@ -3340,6 +3341,7 @@ def fivebelow_scrape_category(driver, category_url, key):
             page_number += 1
         except Exception:
             break
+    info(f'FiveBelow scraping finished. Visited {len(seen)} product page(s). Results saved to Data/{key}_.csv.')
 
 
 def main(driver, number, scrap_driver):
@@ -3392,10 +3394,11 @@ def main(driver, number, scrap_driver):
                 return
             key = normalize_csv_key(input('CSV name (leave blank to use "fivebelow"): '), 'fivebelow')
             csvMaker(key)
+            info(f'Starting FiveBelow scrape; CSV: Data/{key}_.csv')
             fivebelow_scrape_category(driver, fivebelow_url, key)
 
     except Exception as e:
-        log(f'Scraping failed: {e}')
+        info(f'Scraping failed: {e}')
 
 
 if __name__ == '__main__':
