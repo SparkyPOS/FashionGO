@@ -24,6 +24,7 @@ names = {
     'crossroads_close_quick_view',
     'crossroads_quick_view_count',
     'crossroads_upgrade_image_url',
+    'fivebelow_is_security_challenge',
     'fivebelow_product_in_stock',
     'fivebelow_extract_price',
     'fivebelow_collect_variant_options',

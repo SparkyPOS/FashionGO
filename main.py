@@ -2855,11 +2855,30 @@ def crossroads_scrape_category(driver, category_url, key):
         driver.implicitly_wait(10)
 
 
+def fivebelow_is_security_challenge(page_text):
+    """Detect FiveBelow / Cloudflare anti-bot verification pages."""
+    if not page_text:
+        return False
+    text = str(page_text).lower()
+    markers = [
+        'this website uses a security service to protect against malicious bots',
+        'verify you are not a bot',
+        'performance and security by cloudflare',
+        'ray id:',
+        'checking your browser before accessing',
+        'security verification',
+        'cloudflare',
+    ]
+    return any(marker in text for marker in markers)
+
+
 def fivebelow_product_in_stock(page_text):
     """Return True when the page clearly indicates at least one available variant."""
     if not page_text:
         return True
-    text = page_text.lower()
+    text = str(page_text).lower()
+    if fivebelow_is_security_challenge(text):
+        return False
     if re.search(r'\b(?:sold\s+out|out\s+of\s+stock|unavailable|not\s+available|notify\s+me|coming\s+soon|backorder|preorder)\b', text):
         return False
     return True
@@ -3074,6 +3093,8 @@ def fivebelow_scrape_product_page(driver, product_url):
     sleep(3)
     body_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
     lower_text = body_text.lower()
+    if fivebelow_is_security_challenge(lower_text):
+        raise RuntimeError('FiveBelow is serving a Cloudflare security verification page; the scraper cannot continue.')
     if fivebelow_product_in_stock(lower_text) is False:
         return None
 
@@ -3297,6 +3318,13 @@ def fivebelow_scrape_category(driver, category_url, key):
     seen = set()
     page_number = 1
     while True:
+        try:
+            page_text = driver.execute_script("return document.body ? document.body.innerText : ''") or ''
+            if fivebelow_is_security_challenge(page_text):
+                info('FiveBelow security challenge detected; stopping this scrape to avoid a bot-check loop.')
+                break
+        except Exception:
+            pass
         for _ in range(3):
             try:
                 driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
