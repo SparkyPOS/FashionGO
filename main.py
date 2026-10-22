@@ -44,6 +44,12 @@ def normalize_keyword(keyword):
     return keyword.casefold() if keyword else None
 
 
+def normalize_csv_key(value, fallback):
+    """Return a trimmed CSV key or the provided fallback when blank."""
+    candidate = str(value or '').strip()
+    return candidate or fallback
+
+
 def entry_matches_keyword(keyword, *values):
     """Case-insensitive substring match across the product payload."""
     keyword = normalize_keyword(keyword)
@@ -3384,7 +3390,7 @@ def main(driver, number, scrap_driver):
             if not fivebelow_url:
                 log('No FiveBelow URL provided.')
                 return
-            key = input('CSV name (leave blank to use "fivebelow"): ').strip() or 'fivebelow'
+            key = normalize_csv_key(input('CSV name (leave blank to use "fivebelow"): '), 'fivebelow')
             csvMaker(key)
             fivebelow_scrape_category(driver, fivebelow_url, key)
 
