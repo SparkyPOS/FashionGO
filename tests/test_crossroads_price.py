@@ -251,6 +251,21 @@ class FiveBelowVariationTests(unittest.TestCase):
             ['https://www.fivebelow.com/products/12345']
         )
 
+    def test_accepts_relative_and_script_product_links(self):
+        class FakeDriver:
+            def execute_script(self, script, *args):
+                if script.startswith('return document.documentElement'):
+                    return '<html><body><script>window.__NEXT_DATA__={"product":{"url":"/products/67890"}}</script></body></html>'
+                return [
+                    '/products/67890',
+                    'https://www.fivebelow.com/categories/toys-and-games',
+                    '/collections/toys-and-games',
+                ]
+        self.assertEqual(
+            namespace['fivebelow_get_product_links'](FakeDriver()),
+            ['https://www.fivebelow.com/products/67890']
+        )
+
 
 class CrossroadsQuickViewTests(unittest.TestCase):
     def _driver(self, data, open_result=None):
