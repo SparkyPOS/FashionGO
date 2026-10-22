@@ -3115,15 +3115,31 @@ def fivebelow_get_product_links(driver):
                 try { href = new URL(href, document.baseURI).href; } catch (e) { return; }
                 const lower = href.toLowerCase();
                 if (/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(lower)) return;
-                if (lower.includes('/product/') || lower.includes('/products/') || lower.includes('/shop/') || lower.includes('/item/') || /[?&](?:product|item|p)id=/i.test(lower)) {
+                const productLike = /(?:\/products?\/|\/shop\/|\/items?\/|\/product\/|\/item\/|\/p\/|[?&](?:product|item|p)id=|[?&](?:product|item|p)slug=)/i;
+                if (productLike.test(lower) || (/fivebelow\.com\//i.test(lower) && /(?:product|item|shop|category)/i.test(lower) && !/\/categories\//i.test(lower))) {
                     if (!seen.has(href)) { seen.add(href); out.push(href); }
                 }
             };
-            document.querySelectorAll('a[href]').forEach(a => add(a.getAttribute('href')));
+            const scanNode = (root) => {
+                if (!root || !root.querySelectorAll) return;
+                root.querySelectorAll('a[href], [data-href], [data-url]').forEach(el => {
+                    const href = el.getAttribute('href') || el.getAttribute('data-href') || el.getAttribute('data-url') || '';
+                    add(href);
+                });
+            };
+            scanNode(document);
+            document.querySelectorAll('script').forEach(script => {
+                const text = script.textContent || '';
+                if (text && /fivebelow\.com/i.test(text) && /(?:product|item|shop)/i.test(text)) {
+                    for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/g)) {
+                        add(match[0]);
+                    }
+                }
+            });
             if (!out.length) {
                 for (const key of Object.keys(window)) {
                     const value = window[key];
-                    if (value && typeof value === 'string' && /fivebelow\.com\/.*(?:product|item|shop)\//i.test(value)) {
+                    if (value && typeof value === 'string' && /fivebelow\.com\//i.test(value)) {
                         add(value);
                     }
                 }
@@ -3141,6 +3157,20 @@ def fivebelow_get_product_links(driver):
             continue
         seen.add(clean)
         normalized.append(clean)
+
+    if not normalized:
+        try:
+            html = driver.execute_script('return document.documentElement ? document.documentElement.outerHTML : ""') or ''
+            for match in re.finditer(r'https?://[^\s"\'<>]+(?:/(?:products?|items?|shop|product|item)[^\s"\'<>]*)?', html, re.I):
+                clean = match.group(0).split('#')[0]
+                if 'fivebelow.com' not in clean.lower():
+                    continue
+                if clean in seen:
+                    continue
+                seen.add(clean)
+                normalized.append(clean)
+        except Exception:
+            pass
     return normalized
 
 
@@ -3150,6 +3180,12 @@ def fivebelow_scrape_category(driver, category_url, key):
     seen = set()
     page_number = 1
     while True:
+        for _ in range(3):
+            try:
+                driver.execute_script('window.scrollTo(0, document.body.scrollHeight);')
+                sleep(1.2)
+            except Exception:
+                break
         product_links = fivebelow_get_product_links(driver)
         log(f'FiveBelow page {page_number}: found {len(product_links)} product link(s).')
         for product_url in product_links:
@@ -3169,7 +3205,7 @@ def fivebelow_scrape_category(driver, category_url, key):
             break
         try:
             next_button = driver.execute_script(r'''
-                const selectors = ['a[rel="next"]', '.next', '.pagination-next', 'a.next', 'button.next', '[aria-label*="Next" i]'];
+                const selectors = ['a[rel="next"]', '.next', '.pagination-next', 'a.next', 'button.next', '[aria-label*="Next" i]', 'a[aria-label*="Next" i]'];
                 for (const selector of selectors) {
                     const items = document.querySelectorAll(selector);
                     for (const el of items) {
