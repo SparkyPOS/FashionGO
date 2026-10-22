@@ -3178,7 +3178,12 @@ def fivebelow_get_product_links(driver):
             const isExcludedPath = (lower) => /(?:\/categories?\/|\/search(?:\/|$)|\/cart(?:\/|$)|\/checkout(?:\/|$)|\/login(?:\/|$)|\/account(?:\/|$)|\/wishlist(?:\/|$)|\/gift-card(?:\/|$))/i.test(lower);
             const add = href => {
                 if (!href) return;
-                try { href = new URL(href, document.baseURI).href; } catch (e) { return; }
+                const raw = String(href).trim();
+                if (!raw || raw.startsWith('data:') || raw.startsWith('javascript:')) return;
+                try { href = new URL(raw, document.baseURI).href; } catch (e) {
+                    if (!raw.startsWith('/') && !raw.startsWith('./') && !raw.startsWith('../') && !raw.includes('fivebelow')) return;
+                    href = new URL(raw, 'https://www.fivebelow.com').href;
+                }
                 const lower = href.toLowerCase();
                 if (/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(lower)) return;
                 if (isExcludedPath(lower)) return;
@@ -3197,8 +3202,8 @@ def fivebelow_get_product_links(driver):
             scanNode(document);
             document.querySelectorAll('script').forEach(script => {
                 const text = script.textContent || '';
-                if (text && /fivebelow\.com/i.test(text) && /(?:product|item|shop|variant)/i.test(text)) {
-                    for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/g)) {
+                if (text && /(?:fivebelow\.com|\/products?\/|\/items?\/|\/product\/|\/item\/)/i.test(text)) {
+                    for (const match of text.matchAll(/(?:https?:)?\/\/[^\s"'<>]+|\/[^\s"'<>]*?(?:products?|items?|catalog\/products?|shop|product|item)[^\s"'<>]*/gi)) {
                         add(match[0]);
                     }
                 }
@@ -3206,8 +3211,11 @@ def fivebelow_get_product_links(driver):
             if (!out.length) {
                 for (const key of Object.keys(window)) {
                     const value = window[key];
-                    if (value && typeof value === 'string' && /fivebelow\.com\//i.test(value)) {
-                        add(value);
+                    if (value && typeof value === 'string') {
+                        const text = value.trim();
+                        if (text && /(?:fivebelow\.com|\/products?\/|\/items?\/|\/product\/|\/item\/)/i.test(text)) {
+                            add(text);
+                        }
                     }
                 }
             }
@@ -3216,13 +3224,29 @@ def fivebelow_get_product_links(driver):
     except Exception:
         hrefs = []
 
+    def canonicalize_fivebelow_url(raw):
+        if raw is None:
+            return ''
+        clean = str(raw).split('#')[0].strip()
+        if not clean:
+            return ''
+        if clean.startswith('//'):
+            clean = 'https:' + clean
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*://', clean):
+            clean = 'https://www.fivebelow.com' + clean if clean.startswith('/') else 'https://www.fivebelow.com/' + clean
+        clean = clean.rstrip('/')
+        lower = clean.lower()
+        if 'fivebelow.com' not in lower:
+            return ''
+        return clean
+
     normalized = []
     seen = set()
     for href in hrefs:
-        clean = href.split('#')[0]
-        lower = clean.lower()
-        if 'fivebelow.com' not in lower:
+        clean = canonicalize_fivebelow_url(href)
+        if not clean:
             continue
+        lower = clean.lower()
         if any(token in lower for token in ['/cart', '/checkout', '/login', '/search', '/account', '/wishlist', '/gift-card', '/categories']):
             continue
         if any(ext in lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif']):
@@ -3238,10 +3262,10 @@ def fivebelow_get_product_links(driver):
     if not normalized:
         try:
             html = driver.execute_script('return document.documentElement ? document.documentElement.outerHTML : ""') or ''
-            pattern = r'https?://[^\s"\'<>]+(?:/(?:products?|items?|catalog/products?|shop|product|item)[^\s"\'<>]*)?'
+            pattern = r'(?:https?:)?\/\/[^\s"\'<>]+|\/[^\s"\'<>]*?(?:products?|items?|catalog\/products?|shop|product|item)[^\s"\'<>]*'
             for match in re.finditer(pattern, html, re.I):
-                clean = match.group(0).split('#')[0]
-                if 'fivebelow.com' not in clean.lower():
+                clean = canonicalize_fivebelow_url(match.group(0))
+                if not clean:
                     continue
                 lower = clean.lower()
                 if any(token in lower for token in ['/cart', '/checkout', '/login', '/search', '/account', '/wishlist', '/gift-card', '/categories']):
