@@ -27,6 +27,7 @@ names = {
     'fivebelow_product_in_stock',
     'fivebelow_extract_price',
     'fivebelow_collect_variant_options',
+    'fivebelow_get_product_links',
 }
 tree = ast.parse(source.read_text())
 functions = ast.Module(
@@ -234,6 +235,20 @@ class FiveBelowVariationTests(unittest.TestCase):
                 ]
             }),
             {'sizes': ['S', 'M'], 'colors': ['Blue'], 'styles': ['Classic']}
+        )
+
+    def test_accepts_category_product_links_without_category_urls(self):
+        class FakeDriver:
+            def execute_script(self, script, *args):
+                if script.startswith('return document.documentElement'):
+                    return '<html><body><a href="https://www.fivebelow.com/products/12345">Toy</a><a href="https://www.fivebelow.com/categories/toys-and-games">Category</a></body></html>'
+                return [
+                    'https://www.fivebelow.com/products/12345',
+                    'https://www.fivebelow.com/categories/toys-and-games',
+                ]
+        self.assertEqual(
+            namespace['fivebelow_get_product_links'](FakeDriver()),
+            ['https://www.fivebelow.com/products/12345']
         )
 
 

@@ -3175,13 +3175,15 @@ def fivebelow_get_product_links(driver):
         hrefs = driver.execute_script(r'''
             const seen = new Set();
             const out = [];
+            const isExcludedPath = (lower) => /(?:\/categories?\/|\/search(?:\/|$)|\/cart(?:\/|$)|\/checkout(?:\/|$)|\/login(?:\/|$)|\/account(?:\/|$)|\/wishlist(?:\/|$)|\/gift-card(?:\/|$))/i.test(lower);
             const add = href => {
                 if (!href) return;
                 try { href = new URL(href, document.baseURI).href; } catch (e) { return; }
                 const lower = href.toLowerCase();
                 if (/\.(jpe?g|png|gif|webp|avif)(\?|$)/i.test(lower)) return;
-                const productLike = /(?:\/products?\/|\/shop\/|\/items?\/|\/product\/|\/item\/|\/p\/|[?&](?:product|item|p)id=|[?&](?:product|item|p)slug=)/i;
-                if (productLike.test(lower) || (/fivebelow\.com\//i.test(lower) && /(?:product|item|shop|category)/i.test(lower) && !/\/categories\//i.test(lower))) {
+                if (isExcludedPath(lower)) return;
+                const productLike = /(?:\/products?\/|\/catalog\/products?\/|\/shop\/|\/items?\/|\/product\/|\/item\/|\/p\/|[?&](?:product|item|variant|pid|p|sku|slug|id)=|\/products?\b|\/items?\b|\/product\b|\/item\b)/i;
+                if (productLike.test(lower) || (/fivebelow\.com\//i.test(lower) && /(?:product|item|shop|variant)/i.test(lower) && !/\/categories\//i.test(lower))) {
                     if (!seen.has(href)) { seen.add(href); out.push(href); }
                 }
             };
@@ -3195,7 +3197,7 @@ def fivebelow_get_product_links(driver):
             scanNode(document);
             document.querySelectorAll('script').forEach(script => {
                 const text = script.textContent || '';
-                if (text && /fivebelow\.com/i.test(text) && /(?:product|item|shop)/i.test(text)) {
+                if (text && /fivebelow\.com/i.test(text) && /(?:product|item|shop|variant)/i.test(text)) {
                     for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/g)) {
                         add(match[0]);
                     }
@@ -3218,6 +3220,16 @@ def fivebelow_get_product_links(driver):
     seen = set()
     for href in hrefs:
         clean = href.split('#')[0]
+        lower = clean.lower()
+        if 'fivebelow.com' not in lower:
+            continue
+        if any(token in lower for token in ['/cart', '/checkout', '/login', '/search', '/account', '/wishlist', '/gift-card', '/categories']):
+            continue
+        if any(ext in lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif']):
+            continue
+        if not re.search(r'(?:/products?\b|/catalog/products?\b|/shop\b|/items?\b|/product\b|/item\b|[?&](?:product|item|variant|pid|p|slug|id)=)', lower):
+            if not (lower.startswith('https://www.fivebelow.com/') and re.search(r'(?:product|item|shop|variant)', lower)):
+                continue
         if clean in seen:
             continue
         seen.add(clean)
@@ -3226,10 +3238,19 @@ def fivebelow_get_product_links(driver):
     if not normalized:
         try:
             html = driver.execute_script('return document.documentElement ? document.documentElement.outerHTML : ""') or ''
-            for match in re.finditer(r'https?://[^\s"\'<>]+(?:/(?:products?|items?|shop|product|item)[^\s"\'<>]*)?', html, re.I):
+            pattern = r'https?://[^\s"\'<>]+(?:/(?:products?|items?|catalog/products?|shop|product|item)[^\s"\'<>]*)?'
+            for match in re.finditer(pattern, html, re.I):
                 clean = match.group(0).split('#')[0]
                 if 'fivebelow.com' not in clean.lower():
                     continue
+                lower = clean.lower()
+                if any(token in lower for token in ['/cart', '/checkout', '/login', '/search', '/account', '/wishlist', '/gift-card', '/categories']):
+                    continue
+                if any(ext in lower for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.avif']):
+                    continue
+                if not re.search(r'(?:/products?\b|/catalog/products?\b|/shop\b|/items?\b|/product\b|/item\b|[?&](?:product|item|variant|pid|p|slug|id)=)', lower):
+                    if not (lower.startswith('https://www.fivebelow.com/') and re.search(r'(?:product|item|shop|variant)', lower)):
+                        continue
                 if clean in seen:
                     continue
                 seen.add(clean)
