@@ -2880,7 +2880,14 @@ def fivebelow_extract_price(value):
             return None
         return float(match.group(0).replace(',', ''))
 
-    candidates = []
+    def take_best(candidates):
+        if not candidates:
+            return ''
+        return max(candidates, key=lambda value: numeric_value(value) if numeric_value(value) is not None else float('-inf'))
+
+    explicit_current = []
+    explicit_price = []
+    explicit_regular = []
     for pattern in [
         r'(?i)["\'](?:currentPrice|price|salePrice|regularPrice|unitPrice|amount|value)["\']\s*:\s*["\']?\s*(\$?\s*\d[\d,]*(?:\.\d+)?)',
         r'(?i)(?:current\s*price|regular\s*price|sale\s*price|unit\s*price|item\s*price|price)\s*[:=]\s*["\']?\s*(\$?\s*\d[\d,]*(?:\.\d+)?)',
@@ -2888,8 +2895,15 @@ def fivebelow_extract_price(value):
     ]:
         for match in re.finditer(pattern, text):
             candidate = normalize_money(match.group(1))
-            if candidate:
-                candidates.append(candidate)
+            if not candidate:
+                continue
+            context = (match.group(0) or '').lower()
+            if re.search(r'(?i)(?:current|sale|now|today|special|promo|discount|item)\s*price', context):
+                explicit_current.append(candidate)
+            elif re.search(r'(?i)(?:regular|list|msrp|compare|retail|was|save)\b', context):
+                explicit_regular.append(candidate)
+            else:
+                explicit_price.append(candidate)
 
     for line in text.splitlines():
         item = line.strip()
@@ -2899,25 +2913,28 @@ def fivebelow_extract_price(value):
         if re.search(r'\b(?:compare|msrp|retail|was|save|rating|review|sku|item\s*#|qty|quantity|color|size)\b', lower):
             continue
         for match in re.finditer(r'\$\s*\d[\d,]*(?:\.\d+)?', item):
-            candidates.append(match.group(0).strip())
+            explicit_price.append(match.group(0).strip())
         if not re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', item) and re.search(r'\b(?:price|cost|sale|current|regular|now)\b', lower):
             match = re.search(r'\d[\d,]*(?:\.\d+)?', item)
             if match:
                 candidate = normalize_money(match.group(0))
                 if candidate:
-                    candidates.append(candidate)
+                    explicit_price.append(candidate)
 
-    if not candidates:
-        match = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', text)
-        if match:
-            return match.group(0).strip()
-        match = re.search(r'\d[\d,]*(?:\.\d+)?', text)
-        if match and re.search(r'\b(?:price|cost|sale|current|regular|now)\b', text, re.I):
-            return '$' + match.group(0).strip()
-        return ''
+    if explicit_current:
+        return take_best(explicit_current)
+    if explicit_price:
+        return take_best(explicit_price)
+    if explicit_regular:
+        return take_best(explicit_regular)
 
-    best = max(candidates, key=lambda value: numeric_value(value) if numeric_value(value) is not None else float('-inf'))
-    return best
+    match = re.search(r'\$\s*\d[\d,]*(?:\.\d+)?', text)
+    if match:
+        return match.group(0).strip()
+    match = re.search(r'\d[\d,]*(?:\.\d+)?', text)
+    if match and re.search(r'\b(?:price|cost|sale|current|regular|now)\b', text, re.I):
+        return '$' + match.group(0).strip()
+    return ''
 
 
 def fivebelow_collect_variant_options(raw_data):
