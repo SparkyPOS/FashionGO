@@ -24,6 +24,9 @@ names = {
     'crossroads_close_quick_view',
     'crossroads_quick_view_count',
     'crossroads_upgrade_image_url',
+    'fivebelow_product_in_stock',
+    'fivebelow_extract_price',
+    'fivebelow_collect_variant_options',
 }
 tree = ast.parse(source.read_text())
 functions = ast.Module(
@@ -212,6 +215,25 @@ class CrossroadsPriceTests(unittest.TestCase):
         self.assertEqual(metadata['MINIMUM QTY'], '12')
         self.assertEqual(metadata['DIMENSIONS'], '8 x 8')
         self.assertEqual(metadata['DESIGNER'], 'River')
+
+
+class FiveBelowVariationTests(unittest.TestCase):
+    def test_filters_out_of_stock_pages(self):
+        self.assertFalse(namespace['fivebelow_product_in_stock']('Out of stock'))
+        self.assertTrue(namespace['fivebelow_product_in_stock']('In stock'))
+
+    def test_extracts_price_and_variant_meta(self):
+        self.assertEqual(namespace['fivebelow_extract_price']('$6.25'), '$6.25')
+        self.assertEqual(
+            namespace['fivebelow_collect_variant_options']({
+                'variants': [
+                    {'size': 'S', 'color': 'Blue'},
+                    {'size': 'M', 'color': 'Blue'},
+                    {'style': 'Classic'}
+                ]
+            }),
+            {'sizes': ['S', 'M'], 'colors': ['Blue'], 'styles': ['Classic']}
+        )
 
 
 class CrossroadsQuickViewTests(unittest.TestCase):
