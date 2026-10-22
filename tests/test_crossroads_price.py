@@ -224,6 +224,7 @@ class FiveBelowVariationTests(unittest.TestCase):
 
     def test_extracts_price_and_variant_meta(self):
         self.assertEqual(namespace['fivebelow_extract_price']('$6.25'), '$6.25')
+        self.assertEqual(namespace['fivebelow_extract_price']('Price: $6.25 was $10.00'), '$6.25')
         self.assertEqual(
             namespace['fivebelow_collect_variant_options']({
                 'variants': [
